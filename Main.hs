@@ -14,6 +14,7 @@ import Text.Regex.Posix ((=~))
 import Data.Char (isSpace)
 import Data.Maybe (fromJust)
 import Data.List (isSuffixOf)
+import System.Environment (getArgs)
 
 import Control.Exception (catch, SomeException)
 
@@ -21,7 +22,10 @@ import Debug.Trace
 
 main :: IO ()
 main = do
-  runSCGI 1 8888 (git_main [("RepoBase","/var/repo/frontus")])
+  args <- getArgs
+  let port = (read (head args)) :: Int
+      rbase = (head . tail) args
+  runSCGI 1 port (git_main [("RepoBase",rbase)])
 
 doer :: String -> String -> String -> IO B.ByteString
 doer path treeish filnam = do
@@ -72,8 +76,9 @@ readGit url vursion repo = case vursion of
                     (\y -> return $ Left (show (y::SomeException)) )
 
 isNonBlank :: String -> Bool
-isNonBlank x = (not . null) (dropWhile isSpace x)
+isNonBlank x = let lbr = dropWhile isSpace x in not (null lbr || '#' == head lbr)
 
+-- could use DOCUMENT_ROOT for the repobase 
 git_main :: [(String,String)] -> CGI -> IO ()
 git_main cfg cgir = do
   hdrs <- cgiGetHeaders cgir
@@ -95,6 +100,7 @@ git_main cfg cgir = do
       rgit = \f -> readGit f (case treeish of {Nothing -> ""; Just x -> x}) repo  
       mt = mimeType uu 
       headers = [("Content-Type",mt)] ++ case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
+  -- putStrLn ("serving "++uu)
   zxy <- rgit uu
   case zxy of 
           Left err -> do
@@ -102,10 +108,11 @@ git_main cfg cgir = do
              writeResponse cgir (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
              return ()
           Right zz -> do
-            mm <- mapM rgit (filter isNonBlank (lines ( B.unpack zz) ))
             if isSuffixOf ".cat" uu then do
-              sendResponse cgir ([("Status","200 OK"),("Content-Type","text/css")]++tail headers)
-              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> print b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
+              mm <- mapM rgit (filter isNonBlank (lines ( B.unpack zz) ))
+              let mmt = mimeType (take (length uu - 4) uu)
+              sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
+              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
             else do 
               text <- if mt == "text/html" then substitute zz rgit else return zz
               sendResponse cgir ([("Status","200 OK")]++headers)
