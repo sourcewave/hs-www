@@ -1,0 +1,33 @@
+Name:                hs-www
+Version:             0.1
+License:             PublicDomain
+Maintainer:          r0ml@mac.com
+Category:            Web
+Synopsis:            A Haskell library for writing SCGI programs.
+cabal-version:       >= 1.20
+Build-type:          Simple
+
+Library
+  Build-Depends:     base, bytestring, network, hlibgit2, unix
+  Exposed-Modules:   WWW.SCGI, Bindings.Git
+  Ghc-options:       -Wall -threaded
+  Hs-Source-Dirs:    .
+  Default-Language:  Haskell2010
+
+Executable scgi
+  Build-Depends:     base, bytestring, network, hlibgit2, text, unix
+    , regex-posix
+    , regex-compat
+    , mime-types
+  Main-Is:           Main.hs
+  Hs-Source-Dirs:    .
+  Ghc-options:       -Wall -static -threaded
+  Default-Language:  Haskell2010
+  Extra-libraries:   Cffi
+
+Executable hello
+  Main-is:           Hello.hs
+  Hs-Source-Dirs:    examples
+  Ghc-options:       -Wall 
+  Default-language:   Haskell2010
+  Build-depends:     hs-scgi, base, bytestring
