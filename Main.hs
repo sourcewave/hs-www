@@ -14,11 +14,15 @@ import Text.Regex.Posix ((=~))
 import Data.Char (isSpace)
 import Data.Maybe (fromJust)
 import Data.List (isSuffixOf)
+import Data.Either (either)
 import System.Environment (getArgs)
 
 import Control.Exception (catch, SomeException)
 
 import Debug.Trace
+
+(-/-) :: Monad m => m (Either a b) -> (b -> m (Either a c)) -> m (Either a c)
+(-/-) x y = x >>= either (return . Left) y
 
 main :: IO ()
 main = do
@@ -27,26 +31,12 @@ main = do
       rbase = (head . tail) args
   runSCGI 1 port (git_main [("RepoBase",rbase)])
 
-doer :: String -> String -> String -> IO B.ByteString
-doer path treeish filnam = do
-  repox <- openGitRepository path
-  repo <- case repox of
-      Left x -> error ("repository not found (" ++ x ++ "): " ++ x)
-      Right y -> return y
-  theCommit <- revparse repo treeish
-  -- a <- trace v $ resolveReference (fromString treeish)
-  coid <- case theCommit of 
-    Left x -> error ("commit not found (" ++ x ++"): " ++  treeish)
-    Right aa -> lookupCommit repo aa
-  te <- case coid of
-    Left x -> error ("commit not found (" ++ x ++ ")")
-    Right aa -> commitTreeEntry repo aa (fromString filnam)
-  theBlob <- case te of
-    Left e -> error e
-    Right dd -> lookupBlob repo (blobEntryOid dd)
-  case theBlob of 
-    Left a -> error a
-    Right b -> return b
+doer :: String -> String -> String -> IO (Either String B.ByteString)
+doer path treeish filnam = openGitRepository path -/- getBlob
+  where getBlob repo = revparse repo treeish -/- lookupCommit repo
+                         -/- (\aa -> commitTreeEntry repo aa (fromString filnam))
+                         -/- ((lookupBlob repo) . blobEntryOid)
+      -- a <- trace v $ resolveReference (fromString treeish)
 
 readCookies :: String -> [(String,String)]
 readCookies s = 
@@ -72,8 +62,7 @@ mimeType = B.unpack . defaultMimeLookup . T.pack
 readGit :: String -> String -> String -> IO (Either String B.ByteString)
 readGit url vursion repo = case vursion of 
          "" -> rf ( repo ++ url)
-         _ -> do catch (fmap Right ( doer repo vursion url ))
-                    (\y -> return $ Left (show (y::SomeException)) )
+         _ ->  doer repo vursion url 
 
 isNonBlank :: String -> Bool
 isNonBlank x = let lbr = dropWhile isSpace x in not (null lbr || '#' == head lbr)
