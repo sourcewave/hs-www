@@ -31,9 +31,11 @@ main = do
       rbase = (head . tail) args
   runSCGI 1 port (git_main [("RepoBase",rbase)])
 
-doer :: String -> String -> String -> IO (Either String B.ByteString)
-doer path treeish filnam = openGitRepository path -/- getBlob
-  where getBlob repo = revparse repo treeish -/- lookupCommit repo
+readGit :: String -> Maybe String -> String -> IO (Either String B.ByteString)
+readGit path vursion filnam = 
+  if null vers then rf ( path ++ filnam ) else openGitRepository path -/- getBlob
+  where vers = case vursion of { Nothing -> ""; Just x -> x }
+        getBlob repo = revparse repo vers -/- lookupCommit repo
                          -/- (\aa -> commitTreeEntry repo aa (fromString filnam))
                          -/- ((lookupBlob repo) . blobEntryOid)
       -- a <- trace v $ resolveReference (fromString treeish)
@@ -59,11 +61,6 @@ rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeEx
 mimeType :: String -> String
 mimeType = B.unpack . defaultMimeLookup . T.pack
 
-readGit :: String -> String -> String -> IO (Either String B.ByteString)
-readGit url vursion repo = case vursion of 
-         "" -> rf ( repo ++ url)
-         _ ->  doer repo vursion url 
-
 isNonBlank :: String -> Bool
 isNonBlank x = let lbr = dropWhile isSpace x in not (null lbr || '#' == head lbr)
 
@@ -86,24 +83,25 @@ git_main cfg cgir = do
                                 case b of { "" -> Just ("vursion=deleted; path=/; expires=Thu, 01-Jan-1970 00:00:00 GMT");
                                             _ -> Just ("vursion="++b++"; path=/") } )
                  Just _ -> error "nvx cannot match this"
-      rgit = \f -> readGit f (case treeish of {Nothing -> ""; Just x -> x}) repo  
+      rgit = readGit repo treeish
       mt = mimeType uu 
       headers = [("Content-Type",mt)] ++ case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
+      doIndex body = sendResponse cgir ([("Status","200 OK")]++headers) >>
+                     (if mt == "text/html" then substitute body rgit else return body) >>= 
+                     writeResponse cgir
+      doCat body = do
+            mm <- mapM rgit (filter isNonBlank (lines ( B.unpack body) ))
+            let mmt = mimeType (take (length uu - 4) uu)
+            sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
+            mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
+      
   -- putStrLn ("serving "++uu)
   zxy <- rgit uu
-  case zxy of 
-          Left err -> do
-             sendResponse cgir [("Status","404 Not found"),("Content-Type","text/plain")]
-             writeResponse cgir (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
-             return ()
-          Right zz -> do
-            if isSuffixOf ".cat" uu then do
-              mm <- mapM rgit (filter isNonBlank (lines ( B.unpack zz) ))
-              let mmt = mimeType (take (length uu - 4) uu)
-              sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
-              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
-            else do 
-              text <- if mt == "text/html" then substitute zz rgit else return zz
-              sendResponse cgir ([("Status","200 OK")]++headers)
-              writeResponse cgir text
-              
+  either (\err -> do
+         sendResponse cgir [("Status","404 Not found"),("Content-Type","text/plain")]
+         writeResponse cgir (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
+         )
+         (\zz -> do
+            if isSuffixOf ".cat" uu then doCat zz else doIndex zz
+         ) zxy      
+
