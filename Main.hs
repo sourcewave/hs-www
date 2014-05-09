@@ -101,7 +101,6 @@ git_main cfg cgir = do
          sendResponse cgir [("Status","404 Not found"),("Content-Type","text/plain")]
          writeResponse cgir (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
          )
-         (\zz -> do
-            if isSuffixOf ".cat" uu then doCat zz else doIndex zz
+         ( if isSuffixOf ".cat" uu then doCat else doIndex )
          ) zxy      
 
