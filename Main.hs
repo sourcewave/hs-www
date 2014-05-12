@@ -13,10 +13,11 @@ import Text.Regex (mkRegex, matchRegex)
 import Text.Regex.Posix ((=~))
 import Data.Char (isSpace)
 import Data.Maybe (fromJust)
-import Data.List (isSuffixOf)
-import Data.Either (either)
+import Data.List (isSuffixOf, isPrefixOf)
 import System.Environment (getArgs)
-
+import Control.Concurrent (newEmptyMVar, takeMVar, putMVar, MVar(..), forkOS)
+import Database.PostgreSQL.LibPQ
+import Control.Monad (forever)
 import Control.Exception (catch, SomeException)
 
 import Debug.Trace
@@ -27,9 +28,10 @@ import Debug.Trace
 main :: IO ()
 main = do
   args <- getArgs
-  let port = (read (head args)) :: Int
-      rbase = (head . tail) args
-  runSCGI 1 port (git_main [("RepoBase",rbase)])
+  let sport:rbase:dbase:_ = args
+      port = (read sport) :: Int
+  db <- databaser dbase
+  runSCGI 10 port (git_main rbase db)
 
 readGit :: String -> Maybe String -> String -> IO (Either String B.ByteString)
 readGit path vursion filnam = 
@@ -55,6 +57,9 @@ substitute r rgx =
           rfx <- rgx (tail (B.unpack (head fnams)))
           substitute (B.concat (case rfx of { Left a -> [before, "\r\n\r\n*** ",(B.pack a)," ***\r\n\r\n", after]; Right rfz -> [before, rfz, after] })) rgx
 
+getVursionFromSession :: SessionContext -> B.ByteString
+getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in vurs
+
 rf :: String -> IO (Either String B.ByteString)  
 rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
 
@@ -64,18 +69,19 @@ mimeType = B.unpack . defaultMimeLookup . T.pack
 isNonBlank :: String -> Bool
 isNonBlank x = let lbr = dropWhile isSpace x in not (null lbr || '#' == head lbr)
 
--- could use DOCUMENT_ROOT for the repobase 
-git_main :: [(String,String)] -> CGI -> IO ()
-git_main cfg cgir = do
-  hdrs <- cgiGetHeaders cgir
-  let repox = fromJust (lookup "RepoBase" cfg)
-      repo = if last repox == '/' then repox else repox++"/"
+insRegex :: B.ByteString -> B.ByteString -> B.ByteString -> B.ByteString
+insRegex g s z = let (before, during, after) = s =~ g
+                  in if B.null during then s else B.concat [before, during, z, after]
       
+-- could use DOCUMENT_ROOT for the repobase 
+git_main :: String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
+git_main repobase db cgir = do
+  hdrs <- cgiGetHeaders cgir
+  let repo = if last repobase == '/' then repobase else repobase++"/"
       uux = unEscapeString (fromJust $ lookup "PATH_INFO" hdrs)
       uu = if last uux == '/' then tail uux ++ "index.html" else tail uux
-      nvx = case lookup "QUERY_STRING" hdrs of 
-                 Nothing -> Nothing
-                 Just qsx -> matchRegex (mkRegex "(^|[&?])vursion=([^&]*)") (unEscapeString qsx)
+      qryString qsx = matchRegex (mkRegex "(^|[&?])vursion=([^&]*)") (unEscapeString qsx)
+      nvx = maybe Nothing qryString (lookup "QUERY_STRING" hdrs)
       cookies = case lookup "HTTP_COOKIE" hdrs of { Nothing -> []; Just x -> readCookies x }
       (treeish,setcookie) = case nvx of
                  Nothing -> (lookup "vursion" cookies, Nothing)
@@ -83,24 +89,90 @@ git_main cfg cgir = do
                                 case b of { "" -> Just ("vursion=deleted; path=/; expires=Thu, 01-Jan-1970 00:00:00 GMT");
                                             _ -> Just ("vursion="++b++"; path=/") } )
                  Just _ -> error "nvx cannot match this"
-      rgit = readGit repo treeish
-      mt = mimeType uu 
-      headers = [("Content-Type",mt)] ++ case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
-      doIndex body = sendResponse cgir ([("Status","200 OK")]++headers) >>
-                     (if mt == "text/html" then substitute body rgit else return body) >>= 
-                     writeResponse cgir
-      doCat body = do
-            mm <- mapM rgit (filter isNonBlank (lines ( B.unpack body) ))
-            let mmt = mimeType (take (length uu - 4) uu)
-            sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
-            mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
+      jsess = case (lookup "JSESSIONID" cookies) of {Nothing -> ""; Just x -> x}
       
-  -- putStrLn ("serving "++uu)
-  zxy <- rgit uu
-  either (\err -> do
-         sendResponse cgir [("Status","404 Not found"),("Content-Type","text/plain")]
-         writeResponse cgir (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
-         )
-         ( if isSuffixOf ".cat" uu then doCat else doIndex )
-         ) zxy      
+  sess <- if isSuffixOf "/index.html" uu then makeRequest db (jsess, treeish)
+                                         else return $ SessionContext ["","","","",""]
+  putStrLn ("serving "++uu++ " -- " ++ show sess)
+                                         
+  if noUser sess && not (isPrefixOf "login/" uu) && (isSuffixOf "/index.html" uu) then sendRedirect cgir "/login/" else do
+    let treeishfdb = getVursionFromSession sess
+        rgit = readGit repo treeish
+        mt = mimeType uu 
+        addGtm x = do 
+           a <- rgit "i/tags.inc"
+           case a of
+               Left y -> return x
+               Right y -> return $ insRegex "<body[^>]*>" x y
+        headers = [("Content-Type",mt)] ++ case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
+        doHtml body = sendResponse cgir ([("Status","200 OK")]++headers) >>
+                       (if mt == "text/html" then substitute body rgit >>= addGtm >>= return . addSess (jsess, treeish) sess else return body) >>=
+                       writeResponse cgir
+        doCat body = do
+              mm <- mapM rgit (filter isNonBlank (lines ( B.unpack body) ))
+              let mmt = mimeType (take (length uu - 4) uu)
+              sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
+              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
+        fmtErr err = (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
+        sendErr err = sendResponse cgir [("Status","404 Not found"),("Content-Type","text/plain")] >>
+                      writeResponse cgir  (fmtErr err)
+    rgit uu >>= either sendErr ( if isSuffixOf ".cat" uu then doCat else doHtml )
 
+-----------------------------------------------------------------------------------------------
+-- Session stuff
+-----------------------------------------------------------------------------------------------
+
+noUser (SessionContext a) = B.null (head a)
+
+type ReqRsp a b =  MVar (a, MVar b)
+type DbRequest = (String, Maybe String)
+newtype SessionContext = SessionContext [B.ByteString]
+
+instance Show SessionContext where
+  show (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in
+    if B.null uid then ""
+    else (B.unpack . B.concat) ["<script>document.sessionState={'userid': " ,enstr uid ,
+                            ",'company': " , enstr cmp , ",'role':", enstr rol ,",'intercom':",enstr intercom, "};</script>"]
+    where enstr s = B.concat["'",s,"'"] 
+--  show _ = "/* SessionContext should never match this */"  -- this is an error and should never happen
+
+makeRequest :: ReqRsp a b -> a -> IO b
+makeRequest x d = do 
+  a <- newEmptyMVar
+  putMVar x (d,a)
+  takeMVar a
+
+
+-- | This function starts a thread which communicates with the database to retrieve session information
+databaser :: String -> IO (ReqRsp DbRequest SessionContext)
+databaser dbConn = do
+  inbox <- newEmptyMVar
+  conn <- connectdb (fromString dbConn)
+  _ <- forkOS $ forever $ do
+    ( (req,vurs), rsp) <- takeMVar inbox -- get a request
+    putMVar rsp =<< getsess conn req vurs
+  return inbox
+
+varchar = Oid 1043
+
+getsess :: Connection -> String -> Maybe String -> IO SessionContext
+getsess conn js vurs = do
+  cc <- execParams conn "select * from session.check_session($1, $2)"
+                        [Just (varchar, (B.pack js), Text), 
+                         ( maybe Nothing (\x -> Just (varchar, (B.pack x), Text)) vurs ) ]
+                        Text
+  -- if cc is Nothing, I have to complain loudly?
+  -- certainly if conn is nothing, I do
+  case cc of 
+            Nothing -> return $ SessionContext ["","","","",""]
+            Just dbres -> do 
+                       rs <- resultStatus dbres -- should be TuplesOK
+                       erm <- errorMessage conn
+                       nt <- ntuples dbres
+                       nf <- nfields dbres
+                       if nt == 0 then return $ SessionContext ["","","","",""]
+                       else fmap SessionContext $ mapM ( \y -> return . maybe "" id =<< getvalue dbres 0 y) [0..nf-1]
+
+addSess :: DbRequest -> SessionContext -> B.ByteString -> B.ByteString
+addSess (jid,vurs) sess s = let (before, during, after) = s =~ ("<head>" :: B.ByteString)
+                                 in if B.null during then s else B.concat [ before, during, (B.pack $ show sess), after]

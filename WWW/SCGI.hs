@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module WWW.SCGI ( runSCGI, CGI(..), cgiGetHeaders, writeResponse, sendResponse, doCGI
+module WWW.SCGI ( runSCGI, CGI(..), cgiGetHeaders, writeResponse, sendResponse, sendRedirect, doCGI
   ) where
 
 import Control.Applicative
@@ -14,7 +14,7 @@ import Network.Socket.ByteString (recv, send)
 import System.IO (hPutStrLn, stderr)
 import Data.List (intersperse)
 import System.Environment (getEnvironment)
-
+import Data.Char (digitToInt, isDigit)
 import Debug.Trace
 
 import Control.Monad (join)
@@ -38,10 +38,13 @@ doSCGI f sock = do
   f a
   writeResponse a B.empty
 
+-- | WARNING: this ignores non-digits 
+toInt z = foldl (\x y -> 10*x+y) 0 (map digitToInt (filter isDigit z))
+
 netstring :: NetData -> IO (B.ByteString, NetData)
 netstring nd =
   let (lens, rest) = B.break (== ':') (ndBuf nd)
-      len = (read $ B.unpack lens)
+      len = toInt (B.unpack lens)
    in do
         (res, ndxx) <- ndGet len nd { ndBuf = (B.drop 1 rest) }
         (_,ndxxx) <- ndGet 1 ndxx
@@ -70,7 +73,7 @@ getSCGI sock = do
     _ <- forkIO $ do
         (input, ndx) <- netstring =<< ndNew sock
         let vars = (headersx . B.unpack) input
-            len = case lookup "CONTENT_LENGTH" vars of { Nothing -> 0; Just x -> rint x }
+            len = case lookup "CONTENT_LENGTH" vars of { Nothing -> 0; Just x -> toInt x }
         putMVar env vars
         recurse len ndx chan
     hdrs <- newEmptyMVar
@@ -100,6 +103,9 @@ getSCGI sock = do
                      in if null rest then [token] else  token : split (tail rest)
 
 
+sendRedirect :: CGI -> String -> IO ()
+sendRedirect rsp loc = putMVar (cgiRspHeaders rsp) [("Status","302 Found"),("Location",loc)]
+
 sendResponse :: CGI -> HTTPHeaders -> IO ()
 sendResponse rsp = putMVar (cgiRspHeaders rsp)
 
@@ -117,9 +123,6 @@ doListen port loop = withSocketsDo $ bracket (listenOn (PortNumber (fromIntegral
 
 defaultContentType :: String
 defaultContentType = "text/html; charset=ISO-8859-1"
-
-rint :: String -> Int
-rint x = if null rints then 0 else fst (head rints) where rints = (reads x :: [(Int,String)])
 
 data NetData = NetData { 
   _ndSocket :: Socket,

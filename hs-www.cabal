@@ -19,10 +19,11 @@ Executable scgi
     , regex-posix
     , regex-compat
     , mime-types
+    , postgresql-libpq
   Main-Is:           Main.hs
   Hs-Source-Dirs:    .
   Ghc-options:       -Wall -static -threaded
-  Ghc-prof-options:  -fprof-auto
+--  Ghc-prof-options:  -fprof-auto
   Default-Language:  Haskell2010
   Extra-libraries:   Cffi
 
