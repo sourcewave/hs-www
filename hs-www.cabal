@@ -33,3 +33,37 @@ Executable hello
   Ghc-options:       -Wall 
   Default-language:   Haskell2010
   Build-depends:     hs-www, base, bytestring
+
+Executable poster
+  Main-is: Poster.hs
+  Hs-Source-Dirs:  .
+  Ghc-options: -Wall
+  Default-language:   Haskell2010
+  Build-depends:     hs-www, base, bytestring, network
+
+Executable wsclnt
+  Main-is: WSClient.hs
+  Hs-Source-Dirs:  .
+  Ghc-options: -Wall
+  Default-language:   Haskell2010
+  Build-depends:      base, bytestring, network, text, mtl, cryptohash, binary, entropy, base64-bytestring
+
+Executable wssrvr
+  Main-is: WSServer.hs
+  Hs-Source-Dirs:  .
+  Ghc-options: -Wall
+  Default-language:   Haskell2010
+  Build-depends:      base, bytestring, network, text, mtl, cryptohash, binary, entropy, base64-bytestring
+
+Executable wwwclnt
+  Main-is: HTTPClient.hs
+  Hs-Source-Dirs:  .
+  Ghc-options: -Wall
+  Default-language:   Haskell2010
+  Build-depends:      base, bytestring, network
+
+Benchmark bench-sha
+    type:       exitcode-stdio-1.0
+    main-is:    BenchSHA.hs
+    build-depends: base, criterion, bytestring, SHA, cryptohash
+    Default-language:   Haskell2010

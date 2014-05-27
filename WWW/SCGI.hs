@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module WWW.SCGI ( runSCGI, CGI(..), cgiGetHeaders, writeResponse, sendResponse, sendRedirect, doCGI
+module WWW.SCGI ( runSCGI, CGI(..), cgiGetHeaders, cgiGetBody,
+    writeResponse, sendResponse, sendRedirect, doCGI
   ) where
 
 import Control.Applicative
@@ -139,6 +140,12 @@ data CGI = CGI { cgiRqHeaders :: MVar CGIVars,  cgiRqBody :: Chan PostBody
 
 cgiGetHeaders :: CGI -> IO CGIVars
 cgiGetHeaders = takeMVar . cgiRqHeaders
+
+cgiGetBody :: CGI -> IO B.ByteString
+cgiGetBody cgir = cgiGetBody' cgir ""
+  where cgiGetBody' cgir sf = do
+          x <- readChan (cgiRqBody cgir)
+          if B.null x then return sf else cgiGetBody' cgir (B.concat [sf, x])
 
 doCGI :: ( CGI -> IO() ) -> IO ()
 doCGI f = do

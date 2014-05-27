@@ -35,7 +35,8 @@ main = do
 
 readGit :: String -> Maybe String -> String -> IO (Either String B.ByteString)
 readGit path vursion filnam = 
-  if null vers then rf ( path ++ filnam ) else openGitRepository path -/- getBlob
+  if null vers then rf ( path ++ filnam ) 
+    else catch (openGitRepository path -/- getBlob) (\x -> return (Left (show (x :: SomeException)  ) ) )
   where vers = case vursion of { Nothing -> ""; Just x -> x }
         getBlob repo = revparse repo vers -/- lookupCommit repo
                          -/- (\aa -> commitTreeEntry repo aa (fromString filnam))
@@ -72,7 +73,10 @@ isNonBlank x = let lbr = dropWhile isSpace x in not (null lbr || '#' == head lbr
 insRegex :: B.ByteString -> B.ByteString -> B.ByteString -> B.ByteString
 insRegex g s z = let (before, during, after) = s =~ g
                   in if B.null during then s else B.concat [before, during, z, after]
-      
+
+needsLogin :: String -> Bool
+needsLogin s = isPrefixOf "app/" s
+
 -- could use DOCUMENT_ROOT for the repobase 
 git_main :: String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
 git_main repobase db cgir = do
@@ -95,7 +99,7 @@ git_main repobase db cgir = do
                                          else return $ SessionContext ["","","","",""]
   putStrLn ("serving "++uu++ " -- " ++ show sess)
                                          
-  if noUser sess && not (isPrefixOf "login/" uu) && (isSuffixOf "/index.html" uu) then sendRedirect cgir "/login/" else do
+  if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else do
     let treeishfdb = getVursionFromSession sess
         rgit = readGit repo treeish
         mt = mimeType uu 
