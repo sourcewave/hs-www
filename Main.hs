@@ -75,7 +75,7 @@ insRegex g s z = let (before, during, after) = s =~ g
                   in if B.null during then s else B.concat [before, during, z, after]
 
 needsLogin :: String -> Bool
-needsLogin s = isPrefixOf "app/" s
+needsLogin s = isPrefixOf "app/" s && isSuffixOf "/index.html" s 
 
 -- could use DOCUMENT_ROOT for the repobase 
 git_main :: String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
@@ -97,7 +97,7 @@ git_main repobase db cgir = do
       
   sess <- if isSuffixOf "/index.html" uu then makeRequest db (jsess, treeish)
                                          else return $ SessionContext ["","","","",""]
-  putStrLn ("serving "++uu++ " -- " ++ show sess)
+  putStrLn ("serving "++uu++ " -- " ++ show sess ++ "/" ++ show jsess ++ "/" ++ show treeish )
                                          
   if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else do
     let treeishfdb = getVursionFromSession sess
@@ -140,12 +140,13 @@ instance Show SessionContext where
     where enstr s = B.concat["'",s,"'"] 
 --  show _ = "/* SessionContext should never match this */"  -- this is an error and should never happen
 
-makeRequest :: ReqRsp a b -> a -> IO b
+makeRequest :: (Show b, Show a) => ReqRsp a b -> a -> IO b
 makeRequest x d = do 
   a <- newEmptyMVar
   putMVar x (d,a)
-  takeMVar a
-
+  z <- takeMVar a
+--  print (d,z)
+  return z
 
 -- | This function starts a thread which communicates with the database to retrieve session information
 databaser :: String -> IO (ReqRsp DbRequest SessionContext)
