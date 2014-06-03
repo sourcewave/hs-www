@@ -28,16 +28,16 @@ import Debug.Trace
 main :: IO ()
 main = do
   args <- getArgs
-  let sport:rbase:dbase:_ = args
+  let sport:rbase:dtree:dbase:_ = args
       port = (read sport) :: Int
   db <- databaser dbase
-  runSCGI 10 port (git_main rbase db)
+  runSCGI 10 port (git_main rbase dtree db)
 
-readGit :: String -> Maybe String -> String -> IO (Either String B.ByteString)
-readGit path vursion filnam = 
-  if null vers then rf ( path ++ filnam ) 
-    else catch (openGitRepository path -/- getBlob) (\x -> return (Left (show (x :: SomeException)  ) ) )
-  where vers = case vursion of { Nothing -> ""; Just x -> x }
+readGit :: String -> String -> String -> IO (Either String B.ByteString)
+readGit path vers filnam = 
+--  if null vers then rf ( path ++ filnam ) else
+  catch (openGitRepository path -/- getBlob) (\x -> return (Left (show (x :: SomeException)  ) ) )
+  where -- vers = case vursion of { Nothing -> ""; Just x -> x }
         getBlob repo = revparse repo vers -/- lookupCommit repo
                          -/- (\aa -> commitTreeEntry repo aa (fromString filnam))
                          -/- ((lookupBlob repo) . blobEntryOid)
@@ -61,8 +61,8 @@ substitute r rgx =
 getVursionFromSession :: SessionContext -> B.ByteString
 getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in vurs
 
-rf :: String -> IO (Either String B.ByteString)  
-rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
+-- rf :: String -> IO (Either String B.ByteString)  
+-- rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
 
 mimeType :: String -> String
 mimeType = B.unpack . defaultMimeLookup . T.pack
@@ -78,8 +78,8 @@ needsLogin :: String -> Bool
 needsLogin s = isPrefixOf "app/" s && isSuffixOf "/index.html" s 
 
 -- could use DOCUMENT_ROOT for the repobase 
-git_main :: String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
-git_main repobase db cgir = do
+git_main :: String -> String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
+git_main repobase dtree db cgir = do
   hdrs <- cgiGetHeaders cgir
   let repo = if last repobase == '/' then repobase else repobase++"/"
       uux = unEscapeString (fromJust $ lookup "PATH_INFO" hdrs)
@@ -101,7 +101,7 @@ git_main repobase db cgir = do
                                          
   if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else do
     let treeishfdb = getVursionFromSession sess
-        rgit = readGit repo treeish
+        rgit = readGit repo (case treeish of { Nothing -> dtree; Just x -> x })
         mt = mimeType uu 
         addGtm x = do 
            a <- rgit "i/tags.inc"
