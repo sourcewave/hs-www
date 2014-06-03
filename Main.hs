@@ -101,7 +101,7 @@ git_main repobase dtree db cgir = do
                                          
   if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else do
     let treeishfdb = getVursionFromSession sess
-        rgit = readGit repo treeish
+        rgit = readGit repo (case treeish of { Nothing -> dtree; Just x -> x })
         mt = mimeType uu 
         addGtm x = do 
            a <- rgit "i/tags.inc"
