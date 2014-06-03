@@ -28,16 +28,16 @@ import Debug.Trace
 main :: IO ()
 main = do
   args <- getArgs
-  let sport:rbase:dbase:_ = args
+  let sport:rbase:dtree:dbase:_ = args
       port = (read sport) :: Int
   db <- databaser dbase
-  runSCGI 10 port (git_main rbase db)
+  runSCGI 10 port (git_main rbase dtree db)
 
-readGit :: String -> Maybe String -> String -> IO (Either String B.ByteString)
-readGit path vursion filnam = 
-  if null vers then rf ( path ++ filnam ) 
-    else catch (openGitRepository path -/- getBlob) (\x -> return (Left (show (x :: SomeException)  ) ) )
-  where vers = case vursion of { Nothing -> ""; Just x -> x }
+readGit :: String -> String -> String -> IO (Either String B.ByteString)
+readGit path vers filnam = 
+--  if null vers then rf ( path ++ filnam ) else
+  catch (openGitRepository path -/- getBlob) (\x -> return (Left (show (x :: SomeException)  ) ) )
+  where -- vers = case vursion of { Nothing -> ""; Just x -> x }
         getBlob repo = revparse repo vers -/- lookupCommit repo
                          -/- (\aa -> commitTreeEntry repo aa (fromString filnam))
                          -/- ((lookupBlob repo) . blobEntryOid)
@@ -61,8 +61,8 @@ substitute r rgx =
 getVursionFromSession :: SessionContext -> B.ByteString
 getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in vurs
 
-rf :: String -> IO (Either String B.ByteString)  
-rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
+-- rf :: String -> IO (Either String B.ByteString)  
+-- rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
 
 mimeType :: String -> String
 mimeType = B.unpack . defaultMimeLookup . T.pack
@@ -78,8 +78,8 @@ needsLogin :: String -> Bool
 needsLogin s = isPrefixOf "app/" s && isSuffixOf "/index.html" s 
 
 -- could use DOCUMENT_ROOT for the repobase 
-git_main :: String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
-git_main repobase db cgir = do
+git_main :: String -> String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
+git_main repobase dtree db cgir = do
   hdrs <- cgiGetHeaders cgir
   let repo = if last repobase == '/' then repobase else repobase++"/"
       uux = unEscapeString (fromJust $ lookup "PATH_INFO" hdrs)
@@ -87,14 +87,14 @@ git_main repobase db cgir = do
       qryString qsx = matchRegex (mkRegex "(^|[&?])vursion=([^&]*)") (unEscapeString qsx)
       nvx = maybe Nothing qryString (lookup "QUERY_STRING" hdrs)
       cookies = case lookup "HTTP_COOKIE" hdrs of { Nothing -> []; Just x -> readCookies x }
-      (treeish,setcookie) = case nvx of
+      (treeishx,setcookie) = case nvx of
                  Nothing -> (lookup "vursion" cookies, Nothing)
                  Just [_,b] -> (Just b, 
                                 case b of { "" -> Just ("vursion=deleted; path=/; expires=Thu, 01-Jan-1970 00:00:00 GMT");
                                             _ -> Just ("vursion="++b++"; path=/") } )
                  Just _ -> error "nvx cannot match this"
       jsess = case (lookup "JSESSIONID" cookies) of {Nothing -> ""; Just x -> x}
-      
+      treeish = case treeishx of {Nothing -> dtree; Just x -> x }
   sess <- if isSuffixOf "/index.html" uu then makeRequest db (jsess, treeish)
                                          else return $ SessionContext ["","","","",""]
   putStrLn ("serving "++uu++ " -- " ++ show sess ++ "/" ++ show jsess ++ "/" ++ show treeish )
@@ -129,7 +129,7 @@ git_main repobase db cgir = do
 noUser (SessionContext a) = B.null (head a)
 
 type ReqRsp a b =  MVar (a, MVar b)
-type DbRequest = (String, Maybe String)
+type DbRequest = (String, String)
 newtype SessionContext = SessionContext [B.ByteString]
 
 instance Show SessionContext where
@@ -160,11 +160,11 @@ databaser dbConn = do
 
 varchar = Oid 1043
 
-getsess :: Connection -> String -> Maybe String -> IO SessionContext
+getsess :: Connection -> String -> String -> IO SessionContext
 getsess conn js vurs = do
   cc <- execParams conn "select * from session.check_session($1, $2)"
                         [Just (varchar, (B.pack js), Text), 
-                         ( maybe Nothing (\x -> Just (varchar, (B.pack x), Text)) vurs ) ]
+                         Just (varchar, (B.pack vurs), Text) ]
                         Text
   -- if cc is Nothing, I have to complain loudly?
   -- certainly if conn is nothing, I do
