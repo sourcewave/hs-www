@@ -35,13 +35,14 @@ main = do
 
 readGit :: String -> String -> String -> IO (Either String B.ByteString)
 readGit path vers filnam = 
---  if null vers then rf ( path ++ filnam ) else
+  if vers == "-" then rf ( path ++ filnam ) else
   catch (openGitRepository path -/- getBlob) (\x -> return (Left (show (x :: SomeException)  ) ) )
   where -- vers = case vursion of { Nothing -> ""; Just x -> x }
         getBlob repo = revparse repo vers -/- lookupCommit repo
                          -/- (\aa -> commitTreeEntry repo aa (fromString filnam))
                          -/- ((lookupBlob repo) . blobEntryOid)
       -- a <- trace v $ resolveReference (fromString treeish)
+        rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
 
 readCookies :: String -> [(String,String)]
 readCookies s = 
@@ -61,9 +62,6 @@ substitute r rgx =
 getVursionFromSession :: SessionContext -> B.ByteString
 getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in vurs
 
--- rf :: String -> IO (Either String B.ByteString)  
--- rf x = catch ( fmap Right $ B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
-
 mimeType :: String -> String
 mimeType = B.unpack . defaultMimeLookup . T.pack
 
@@ -75,7 +73,7 @@ insRegex g s z = let (before, during, after) = s =~ g
                   in if B.null during then s else B.concat [before, during, z, after]
 
 needsLogin :: String -> Bool
-needsLogin s = isPrefixOf "app/" s && isSuffixOf "/index.html" s 
+needsLogin s = (isPrefixOf "app/" s || isPrefixOf "amber" s ) && isSuffixOf "/index.html" s 
 
 -- could use DOCUMENT_ROOT for the repobase 
 git_main :: String -> String -> String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
@@ -94,7 +92,7 @@ git_main repobase dtree err404 db cgir = do
                                             _ -> Just ("vursion="++b++"; path=/") } )
                  Just _ -> error "nvx cannot match this"
       jsess = case (lookup "JSESSIONID" cookies) of {Nothing -> ""; Just x -> x}
-      treeish = case treeishx of {Nothing -> dtree; Just x -> x }
+      treeish = case treeishx of {Nothing -> dtree; Just "" -> dtree; Just x -> x }
   sess <- if isSuffixOf "/index.html" uu then makeRequest db (jsess, treeish)
                                          else return $ SessionContext ["","","","",""]
   putStrLn ("serving "++uu++ " -- " ++ show sess ++ "/" ++ show jsess ++ "/" ++ show treeish )
