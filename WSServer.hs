@@ -3,12 +3,17 @@ import Data.Char (isPunctuation, isSpace)
 import Data.Monoid (mappend)
 import Data.Text (Text)
 import Control.Exception (finally)
-import Control.Monad (forM_, forever)
-import Control.Concurrent (MVar, newMVar, modifyMVar_, modifyMVar, readMVar)
+import Control.Monad (forM_, forever, unless)
+import Control.Concurrent (MVar, newMVar, modifyMVar_, modifyMVar, readMVar, forkIO)
+
+import Control.Concurrent.Chan
+import Data.IORef
 
 -- import Control.Monad.IO.Class (liftIO)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+
+import System.Environment (getArgs)
 
 import WWW.WebSocket as WS
 
@@ -40,10 +45,33 @@ broadcast message clients = do
 main :: IO ()
 main = do
 --    state <- newMVar newServerState
-   WS.runServer 10 9160 application -- state
+  args <- getArgs
+  let port = (read . head) args :: Int
+  z <- newChan
+  y <- newIORef []
+  forkIO $ distributor z y -- keep track of chan
+  forkIO $ forever $ sender y
+  WS.runServer 10 port receiver (writeChan z) -- sends the websocket to the distributor
 
-application :: String -> IO ()
-application ws = do
+sender :: IORef [WebSocket] -> IO ()
+sender wss = do
+  
+  -- what I want here is to maintain a (stateful) list of websockets that messages
+  -- can be sent to
+  
+  line <- getLine
+  unless (null line) $ do
+    rf <- readIORef wss
+    mapM_ (flip WS.sendMessage (Text line)) rf
+
+distributor :: Chan WebSocket -> IORef [WebSocket] -> IO ()
+distributor wsc wss = forever $ do
+  a <- readChan wsc
+  atomicModifyIORef' wss (\x -> ((a : x),())) 
+  
+
+receiver :: String -> IO ()
+receiver ws = do
    print "Starting"
    print ("gotcha " ++ show ws)
 

@@ -217,7 +217,7 @@ getWS sock hdx = do
                       readMsgs ch (B.drop 4 post)
         readMsgs ch lft = do
             let (frm, lfto) = decodeFrame lft
-            print ("readMsg ",frm,lfto)
+            print ("readMsg "::String,frm,lfto)
             case frm of 
               Just frmx -> writeChan ch frmx
               Nothing -> return ()
@@ -302,28 +302,28 @@ sendMessage :: WebSocket -> Message -> IO ()
 sendMessage rsp x = writeChan (wsSend rsp) x
 
 -- | runSCGI threads port cgi-function (in the IO monad)
-runServer :: WebSocketMessage a => Int -> Int -> (a -> IO () ) -> IO ()
-runServer maxThreads port f = join (doListen port <$> handler f <$> newQSem maxThreads )
+runServer :: WebSocketMessage a => Int -> Int -> (a -> IO () ) -> (WebSocket -> IO() )-> IO ()
+runServer maxThreads port f g = join (doListen port <$> handler f g <$> newQSem maxThreads )
 
 doListen :: Int -> (S.Socket -> IO ()) -> IO ()
 doListen port loop = S.withSocketsDo $ bracket (listenOn (PortNumber (fromIntegral port))) S.sClose loop
 
-handler :: WebSocketMessage a => (a -> IO ()) -> QSem -> S.Socket -> IO ()
-handler f qsem socket = do
+handler :: WebSocketMessage a => (a -> IO ()) -> (WebSocket -> IO ()) -> QSem -> S.Socket -> IO ()
+handler f g qsem socket = do
   waitQSem qsem
   (sock, _) <- S.accept socket
   _ <- forkIO $ do
-      catch (doWebSocket f sock) (\e -> hPutStrLn stderr $ "websocket: "++show (e::SomeException))
+      catch (doWebSocket f g sock) (\e -> hPutStrLn stderr $ "websocket: "++show (e::SomeException))
       signalQSem qsem
-  handler f qsem socket
+  handler f g qsem socket
 
-doWebSocket :: WebSocketMessage a => (a -> IO() ) -> S.Socket -> IO ()
-doWebSocket f sock = do
+doWebSocket :: WebSocketMessage a => (a -> IO() ) -> (WebSocket -> IO ()) -> S.Socket -> IO ()
+doWebSocket f g sock = do
   a <- getServerWS sock
   -- what I do here is
   -- a) call the application for initialization (with the connection parms)
   -- b) call the application for each msg received ?
   -- OR
   -- the expectation is that the application loops forever and pulls messages from the Channel
-  forever $  wsGetMessage a >>= f
-  
+  forkIO $ forever $  wsGetMessage a >>= f -- call the fn when I get a message?
+  g a

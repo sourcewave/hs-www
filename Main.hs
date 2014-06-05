@@ -28,10 +28,10 @@ import Debug.Trace
 main :: IO ()
 main = do
   args <- getArgs
-  let sport:rbase:dtree:dbase:_ = args
+  let sport:rbase:dtree:err404:dbase:_ = args
       port = (read sport) :: Int
   db <- databaser dbase
-  runSCGI 10 port (git_main rbase dtree db)
+  runSCGI 10 port (git_main rbase dtree err404 db)
 
 readGit :: String -> String -> String -> IO (Either String B.ByteString)
 readGit path vers filnam = 
@@ -78,8 +78,8 @@ needsLogin :: String -> Bool
 needsLogin s = isPrefixOf "app/" s && isSuffixOf "/index.html" s 
 
 -- could use DOCUMENT_ROOT for the repobase 
-git_main :: String -> String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
-git_main repobase dtree db cgir = do
+git_main :: String -> String -> String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
+git_main repobase dtree err404 db cgir = do
   hdrs <- cgiGetHeaders cgir
   let repo = if last repobase == '/' then repobase else repobase++"/"
       uux = unEscapeString (fromJust $ lookup "PATH_INFO" hdrs)
@@ -118,8 +118,11 @@ git_main repobase dtree db cgir = do
               sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
               mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
         fmtErr err = (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
-        sendErr err = sendResponse cgir [("Status","404 Not found"),("Content-Type","text/plain")] >>
-                      writeResponse cgir  (fmtErr err)
+        
+        sendErr err = do
+          sendResponse cgir [("Status","404 Not found"),("Content-Type","text/html")]
+          errm <- rgit err404
+          writeResponse cgir $ case errm of { Left _ -> fmtErr err; Right x -> x }
     rgit uu >>= either sendErr ( if isSuffixOf ".cat" uu then doCat else doHtml )
 
 -----------------------------------------------------------------------------------------------
