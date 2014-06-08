@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import WWW.SCGI
+import Adaptor.SCGI
 import qualified Data.ByteString.Char8 as B (pack)
 
 cgiMain :: CGI -> IO ()

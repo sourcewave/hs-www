@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-import WWW.SCGI
+import Adaptor.SCGI
 import System.Environment
 import Data.ByteString.Char8 as B (concat, pack, length)
 

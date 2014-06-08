@@ -9,7 +9,7 @@ Build-type:          Simple
 
 Library
   Build-Depends:     base, bytestring, network, hlibgit2, unix
-  Exposed-Modules:   WWW.SCGI, Bindings.Git
+  Exposed-Modules:   Adaptor.SCGI, Junction.Git
   Ghc-options:       -Wall -threaded
   Hs-Source-Dirs:    .
   Default-Language:  Haskell2010
@@ -25,7 +25,7 @@ Executable scgi
   Ghc-options:       -Wall -static -threaded
 --  Ghc-prof-options:  -fprof-auto
   Default-Language:  Haskell2010
-  Extra-libraries:   Cffi
+--  Extra-libraries:   Cffi
 
 Executable hello
   Main-is:           Hello.hs
@@ -36,34 +36,42 @@ Executable hello
 
 Executable poster
   Main-is: Poster.hs
-  Hs-Source-Dirs:  .
+  Hs-Source-Dirs:  examples
   Ghc-options: -Wall
   Default-language:   Haskell2010
   Build-depends:     hs-www, base, bytestring, network
 
 Executable wsclnt
   Main-is: WSClient.hs
-  Hs-Source-Dirs:  .
+  Hs-Source-Dirs:  examples, .
   Ghc-options: -Wall
   Default-language:   Haskell2010
   Build-depends:      base, bytestring, network, text, mtl, cryptohash, binary, entropy, base64-bytestring
 
 Executable wssrvr
   Main-is: WSServer.hs
-  Hs-Source-Dirs:  .
+  Hs-Source-Dirs:  examples, .
   Ghc-options: -Wall
   Default-language:   Haskell2010
   Build-depends:      base, bytestring, network, text, mtl, cryptohash, binary, entropy, base64-bytestring
 
-Executable wwwclnt
-  Main-is: HTTPClient.hs
-  Hs-Source-Dirs:  .
+-- Executable wwwclnt
+--   Main-is: HTTPClient.hs
+--   Hs-Source-Dirs:  examples, .
+--   Ghc-options: -Wall
+--   Default-language:   Haskell2010
+--   Build-depends:      base, bytestring, network
+
+Executable hspg
+  Main-is: HsPg.hs
+  Hs-Source-Dirs: examples, .
   Ghc-options: -Wall
   Default-language:   Haskell2010
-  Build-depends:      base, bytestring, network
+  Build-depends:      base, bytestring, network, binary, text
 
 Benchmark bench-sha
     type:       exitcode-stdio-1.0
+    Hs-Source-Dirs: examples
     main-is:    BenchSHA.hs
     build-depends: base, criterion, bytestring, SHA, cryptohash
     Default-language:   Haskell2010

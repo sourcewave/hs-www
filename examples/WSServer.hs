@@ -15,7 +15,7 @@ import qualified Data.Text.IO as T
 
 import System.Environment (getArgs)
 
-import WWW.WebSocket as WS
+import Adaptor.WebSocket as WS
 
 {-
 type Client = (Text, WS.Connection)

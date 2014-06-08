@@ -1,7 +1,7 @@
 {-# LANGUAGE  OverloadedStrings, FlexibleContexts #-}
 
-import WWW.SCGI
-import Bindings.Git (revparse, lookupCommit, commitTreeEntry, lookupBlob
+import Adaptor.SCGI
+import Junction.Git (revparse, lookupCommit, commitTreeEntry, lookupBlob
   ,openGitRepository, blobEntryOid)
 
 import qualified Data.ByteString.Char8 as B (ByteString, concat, pack, unpack, readFile, null)
@@ -73,7 +73,7 @@ insRegex g s z = let (before, during, after) = s =~ g
                   in if B.null during then s else B.concat [before, during, z, after]
 
 needsLogin :: String -> Bool
-needsLogin s = (isPrefixOf "app/" s || isPrefixOf "amber" s ) && isSuffixOf "/index.html" s 
+needsLogin s = (isPrefixOf "app/" s || isPrefixOf "amber/" s ) && isSuffixOf "/index.html" s 
 
 -- could use DOCUMENT_ROOT for the repobase 
 git_main :: String -> String -> String -> ReqRsp DbRequest SessionContext -> CGI -> IO ()
@@ -167,6 +167,7 @@ getsess conn js vurs = do
                         [Just (varchar, (B.pack js), Text), 
                          Just (varchar, (B.pack vurs), Text) ]
                         Text
+  print (js, vurs, cc)
   -- if cc is Nothing, I have to complain loudly?
   -- certainly if conn is nothing, I do
   case cc of 
@@ -176,9 +177,12 @@ getsess conn js vurs = do
                        erm <- errorMessage conn
                        nt <- ntuples dbres
                        nf <- nfields dbres
+                       print (rs, erm, nt, nf)
                        if nt == 0 then return $ SessionContext ["","","","",""]
-                       else fmap SessionContext $ mapM ( \y -> return . maybe "" id =<< getvalue dbres 0 y) [0..nf-1]
-
+                       else do
+                          m <- mapM ( \y -> return . maybe "" id =<< getvalue dbres 0 y) [0..nf-1]
+                          print m
+                          return (SessionContext m)
 addSess :: DbRequest -> SessionContext -> B.ByteString -> B.ByteString
 addSess (jid,vurs) sess s = let (before, during, after) = s =~ ("<head>" :: B.ByteString)
                                  in if B.null during then s else B.concat [ before, during, (B.pack $ show sess), after]

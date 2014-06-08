@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Bindings.Git where
+module Junction.Git where
 
 import Bindings.Libgit2
 

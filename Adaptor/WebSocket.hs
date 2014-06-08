@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, FlexibleInstances #-}
 
-module WWW.WebSocket where
+module Adaptor.WebSocket where
 
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Base64 as B64

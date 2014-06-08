@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module WWW.SCGI ( runSCGI, CGI(..), cgiGetHeaders, cgiGetBody,
+module Adaptor.SCGI ( runSCGI, CGI(..), cgiGetHeaders, cgiGetBody,
     writeResponse, sendResponse, sendRedirect, doCGI
   ) where
 
