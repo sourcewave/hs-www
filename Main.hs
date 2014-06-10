@@ -20,6 +20,8 @@ import Database.PostgreSQL.LibPQ
 import Control.Monad (forever)
 import Control.Exception (catch, SomeException)
 
+import Data.IORef
+
 import Debug.Trace
 
 (-/-) :: Monad m => m (Either a b) -> (b -> m (Either a c)) -> m (Either a c)
@@ -96,32 +98,36 @@ git_main repobase dtree err404 db cgir = do
   sess <- if isSuffixOf "/index.html" uu then makeRequest db (jsess, treeish)
                                          else return $ SessionContext ["","","","",""]
   putStrLn ("serving "++uu++ " -- " ++ show sess ++ "/" ++ show jsess ++ "/" ++ show treeish )
-                                         
-  if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else do
-    let treeishfdb = getVursionFromSession sess
-        rgit = readGit repo treeish
-        mt = mimeType uu 
-        addGtm x = do 
-           a <- rgit "i/tags.inc"
-           case a of
+
+  case sess of 
+    DbError dberr -> do
+      sendResponse cgir[("Status","503 Database error"),("Content-Type","text/html")]
+      writeResponse cgir $ B.concat ["Database connection error: ", dberr]
+    _ -> if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else do
+      let treeishfdb = getVursionFromSession sess
+          rgit = readGit repo treeish
+          mt = mimeType uu 
+          addGtm x = do 
+             a <- rgit "i/tags.inc"
+             case a of
                Left y -> return x
                Right y -> return $ insRegex "<body[^>]*>" x y
-        headers = [("Content-Type",mt)] ++ case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
-        doHtml body = sendResponse cgir ([("Status","200 OK")]++headers) >>
+          headers = [("Content-Type",mt)] ++ case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
+          doHtml body = sendResponse cgir ([("Status","200 OK")]++headers) >>
                        (if mt == "text/html" then substitute body rgit >>= addGtm >>= return . addSess (jsess, treeish) sess else return body) >>=
                        writeResponse cgir
-        doCat body = do
+          doCat body = do
               mm <- mapM rgit (filter isNonBlank (lines ( B.unpack body) ))
               let mmt = mimeType (take (length uu - 4) uu)
               sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
               mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
-        fmtErr err = (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
+          fmtErr err = (B.pack ("failed to read version "++(show treeish) ++" of: " ++ uu ++ "\r\n\r\n" ++ err)  )
         
-        sendErr err = do
-          sendResponse cgir [("Status","404 Not found"),("Content-Type","text/html")]
-          errm <- rgit err404
-          writeResponse cgir $ case errm of { Left _ -> fmtErr err; Right x -> x }
-    rgit uu >>= either sendErr ( if isSuffixOf ".cat" uu then doCat else doHtml )
+          sendErr err = do
+            sendResponse cgir [("Status","404 Not found"),("Content-Type","text/html")]
+            errm <- rgit err404
+            writeResponse cgir $ case errm of { Left _ -> fmtErr err; Right x -> x }
+      rgit uu >>= either sendErr ( if isSuffixOf ".cat" uu then doCat else doHtml )
 
 -----------------------------------------------------------------------------------------------
 -- Session stuff
@@ -131,7 +137,7 @@ noUser (SessionContext a) = B.null (head a)
 
 type ReqRsp a b =  MVar (a, MVar b)
 type DbRequest = (String, String)
-newtype SessionContext = SessionContext [B.ByteString]
+data SessionContext = SessionContext [B.ByteString] | DbError B.ByteString
 
 instance Show SessionContext where
   show (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in
@@ -140,6 +146,7 @@ instance Show SessionContext where
                             ",'company': " , enstr cmp , ",'role':", enstr rol ,",'intercom':",enstr intercom, "};</script>"]
     where enstr s = B.concat["'",s,"'"] 
 --  show _ = "/* SessionContext should never match this */"  -- this is an error and should never happen
+  show (DbError a) = (B.unpack . B.concat) ["*** ",a, " ***"]
 
 makeRequest :: (Show b, Show a) => ReqRsp a b -> a -> IO b
 makeRequest x d = do 
@@ -153,7 +160,8 @@ makeRequest x d = do
 databaser :: String -> IO (ReqRsp DbRequest SessionContext)
 databaser dbConn = do
   inbox <- newEmptyMVar
-  conn <- connectdb (fromString dbConn)
+  idb <- connectdb (fromString dbConn)
+  conn <- newIORef ( idb, fromString dbConn)
   _ <- forkOS $ forever $ do
     ( (req,vurs), rsp) <- takeMVar inbox -- get a request
     putMVar rsp =<< getsess conn req vurs
@@ -161,27 +169,42 @@ databaser dbConn = do
 
 varchar = Oid 1043
 
-getsess :: Connection -> String -> String -> IO SessionContext
-getsess conn js vurs = do
+getsess :: IORef (Connection, B.ByteString) -> String -> String -> IO SessionContext
+getsess iconn js vurs = do
+  (conn, nret) <- readIORef iconn
   cc <- execParams conn "select * from session.check_session($1, $2)"
                         [Just (varchar, (B.pack js), Text), 
                          Just (varchar, (B.pack vurs), Text) ]
                         Text
-  print (js, vurs, cc)
+  -- print (js, vurs, cc)
   -- if cc is Nothing, I have to complain loudly?
   -- certainly if conn is nothing, I do
-  case cc of 
-            Nothing -> return $ SessionContext ["","","","",""]
+  cd <- if cc == Nothing then do
+           print "Resetting database connection"
+           nconn <- connectdb nret
+           erm <- fmap (maybe "" id ) (errorMessage nconn)
+           print erm
+           writeIORef iconn (nconn, nret)
+           execParams nconn "select * from session.check_session($1, $2)"
+                        [Just (varchar, (B.pack js), Text), 
+                         Just (varchar, (B.pack vurs), Text) ]
+                        Text
+        else return cc
+  (conn,_) <- readIORef iconn
+  erm <- fmap (maybe "" id ) (errorMessage conn)
+  case cd of 
+            Nothing -> do
+              print (B.concat ["***** ====> ",erm])
+              return $ DbError erm
             Just dbres -> do 
                        rs <- resultStatus dbres -- should be TuplesOK
-                       erm <- errorMessage conn
                        nt <- ntuples dbres
                        nf <- nfields dbres
-                       print (rs, erm, nt, nf)
+                       -- print (rs, erm, nt, nf)
                        if nt == 0 then return $ SessionContext ["","","","",""]
                        else do
                           m <- mapM ( \y -> return . maybe "" id =<< getvalue dbres 0 y) [0..nf-1]
-                          print m
+                          -- print m
                           return (SessionContext m)
 addSess :: DbRequest -> SessionContext -> B.ByteString -> B.ByteString
 addSess (jid,vurs) sess s = let (before, during, after) = s =~ ("<head>" :: B.ByteString)
