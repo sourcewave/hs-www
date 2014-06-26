@@ -67,7 +67,7 @@ sender wss = do
 distributor :: Chan WebSocket -> IORef [WebSocket] -> IO ()
 distributor wsc wss = forever $ do
   a <- readChan wsc
-  atomicModifyIORef' wss (\x -> ((a : x),())) 
+  atomicModifyIORef' wss (\x -> (a : x, ())) 
   
 
 receiver :: String -> IO ()

@@ -12,7 +12,6 @@ import Foreign.Storable (peek)
 -- import Control.Exception (SomeException)
 import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, mallocForeignPtr, castForeignPtr)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
--- import Control.Monad (zipWithM)
 import Control.Applicative ((<$>))
 -- import Data.Time.LocalTime (ZonedTime, utcToZonedTime, minutesToTimeZone)
 -- import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
@@ -26,28 +25,28 @@ type TreeFilePath = ByteString
 data GitRepository = GitRepository (ForeignPtr C'git_repository) deriving(Show)
 
 mkRepo :: (Show a, Integral a) => Ptr (Ptr C'git_repository) -> a -> IO (Either GitError GitRepository)
-mkRepo ptr r = 
-  if (r < 0) then lasterr "Could not open repository"
+mkRepo ptr r =
+  if r < 0 then lasterr "Could not open repository"
   else return . Right . GitRepository =<< ap newForeignPtr c'git_repository_free =<< peek ptr
 
 createGitRepository :: FilePath -> Bool -> IO (Either GitError GitRepository)
 createGitRepository rpath isBare = c'git_threads_init >>
-  (alloca $ \ptr -> withCString rpath $ \str -> mkRepo ptr =<< c'git_repository_init ptr str (fromBool isBare))
+  alloca (\ptr -> withCString rpath $ \str -> mkRepo ptr =<< c'git_repository_init ptr str (fromBool isBare))
 
 -- | openGitRepository initializes the C library for accessing git.
 -- It expects the pathname of the repository
 openGitRepository :: FilePath -> IO (Either GitError GitRepository)
-openGitRepository rpath = c'git_threads_init >> 
-  (alloca $ \ptr -> withCString rpath $ \str -> mkRepo ptr =<< c'git_repository_open ptr str)
+openGitRepository rpath = c'git_threads_init >>
+  alloca (\ptr -> withCString rpath $ \str -> mkRepo ptr =<< c'git_repository_open ptr str)
 
 lookupCommit :: GitRepository -> OidPtr -> IO (Either GitError Commit)
-lookupCommit repo oid = lookupObject' repo oid c'git_commit_lookup lgObjToCommit 
-      
+lookupCommit repo oid = lookupObject' repo oid c'git_commit_lookup lgObjToCommit
+
 lookupObject':: GitRepository -> OidPtr
   -> (Ptr (Ptr a) -> Ptr C'git_repository -> Ptr C'git_oid -> IO CInt)
   -> ( ForeignPtr a -> IO b)
   -> IO (Either GitError b)
-lookupObject' (GitRepository repo) (OidPtr oid) lookupFn createFn = 
+lookupObject' (GitRepository repo) (OidPtr oid) lookupFn createFn =
     alloca $ \ptr -> do
         r <- withForeignPtr repo $ \repoPtr -> withForeignPtr oid $ \oidPtr -> lookupFn ptr repoPtr oidPtr
         if r < 0 then do
@@ -76,9 +75,9 @@ peekGitTime tptr = do
 commitTreeEntry :: GitRepository -> Commit -> TreeFilePath -> IO (Either GitError TreeEntry)
 commitTreeEntry repo (Commit c) path = do
   a <- lookupTree repo c
-  case a of 
+  case a of
      Left e -> return $ Left e
-     Right t -> treeEntry t path 
+     Right t -> treeEntry t path
 
 treeEntry :: Tree -> TreeFilePath -> IO (Either GitError TreeEntry)
 treeEntry (LgTree tree) fp = alloca $ \entryPtr ->
@@ -90,14 +89,14 @@ lookupTree :: GitRepository -> OidPtr -> IO (Either GitError Tree)
 lookupTree repo oid
     | show oid == emptyTreeId = (return . Left) "empty tree"
     | otherwise = lookupObject' repo oid c'git_tree_lookup (return . LgTree)
-        
+
 lgObjToBlob :: ForeignPtr C'git_blob -> IO ByteString
 lgObjToBlob fptr = do
     bs <- withForeignPtr fptr $ \ptr -> do
         size <- c'git_blob_rawsize ptr
         buf  <- c'git_blob_rawcontent ptr
         packCStringLen (castPtr buf, fromIntegral size)
-    return $ bs
+    return bs
 
 entryToTreeEntry :: Ptr C'git_tree_entry -> IO TreeEntry
 entryToTreeEntry entry = do
@@ -127,14 +126,14 @@ lookupBlob :: GitRepository -> OidPtr -> IO (Either GitError ByteString)
 lookupBlob repo oid = lookupObject' repo oid c'git_blob_lookup lgObjToBlob
 
 revparse :: GitRepository -> String -> IO (Either GitError OidPtr)
-revparse (GitRepository repo) string = do
+revparse (GitRepository repo) string =
   alloca $ \pptr -> do
     ret <- withForeignPtr repo $ \repoPtr -> withCString string $ \namePtr ->
              c'git_revparse_single pptr repoPtr namePtr
     if ret < 0 then lasterr "Could not parse commit" -- (return . Left . errmsg) ret
     else do
       ref <- peek pptr
-      oo <- coidPtrToOid =<< c'git_object_id ref 
+      oo <- coidPtrToOid =<< c'git_object_id ref
       c'git_object_free ref
       (return . Right) oo
 
@@ -142,7 +141,7 @@ coidPtrToOid :: Ptr C'git_oid -> IO OidPtr
 coidPtrToOid coidptr = do
     fptr <- mallocForeignPtr
     withForeignPtr fptr (flip c'git_oid_cpy coidptr)
-    return $ OidPtr fptr 
+    return $ OidPtr fptr
 
 data OidPtr = OidPtr (ForeignPtr C'git_oid) deriving(Show)
 
@@ -159,4 +158,3 @@ lasterr str = do
 data TreeEntry = BlobEntry   { blobEntryOid   :: OidPtr, blobEntryKind  :: BlobKind }
                  | TreeEntry   { treeEntryOid   :: OidPtr }
                  | CommitEntry { commitEntryOid :: OidPtr }
-                 

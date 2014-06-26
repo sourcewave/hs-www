@@ -18,7 +18,7 @@ import System.Environment (getEnvironment)
 import Data.Char (digitToInt, isDigit)
 import Debug.Trace
 
-import Control.Monad (join)
+import Control.Monad (join, when)
 
 handler :: (CGI -> IO ()) -> QSem -> Socket -> IO ()
 handler f qsem socket = do
@@ -39,7 +39,8 @@ doSCGI f sock = do
   f a
   writeResponse a B.empty
 
--- | WARNING: this ignores non-digits 
+-- | WARNING: this ignores non-digits
+toInt :: String -> Int
 toInt z = foldl (\x y -> 10*x+y) 0 (map digitToInt (filter isDigit z))
 
 netstring :: NetData -> IO (B.ByteString, NetData)
@@ -47,21 +48,21 @@ netstring nd =
   let (lens, rest) = B.break (== ':') (ndBuf nd)
       len = toInt (B.unpack lens)
    in do
-        (res, ndxx) <- ndGet len nd { ndBuf = (B.drop 1 rest) }
+        (res, ndxx) <- ndGet len nd { ndBuf = B.drop 1 rest }
         (_,ndxxx) <- ndGet 1 ndxx
         return (res,ndxxx)
 
 ndGet :: Int -> NetData -> IO (B.ByteString, NetData)
-ndGet x nd@(NetData sok buf) = 
-  if (x <= B.length buf) then let (bh, bt) = B.splitAt x buf in return (bh, nd { ndBuf = bt } )
+ndGet x nd@(NetData sok buf) =
+  if x <= B.length buf then let (bh, bt) = B.splitAt x buf in return (bh, nd { ndBuf = bt } )
   else do
     let y = x - B.length buf
     more <- recv sok (max y 4096)
-    if B.length more > 0 then do 
+    if B.length more > 0 then do
       (res, ndx) <-  ndGet y nd { ndBuf = more }
       return ( B.concat [buf, res], ndx )
     else return (ndBuf nd, nd { ndBuf = B.empty})
-    
+
 ndNew :: Socket -> IO NetData
 ndNew sock = NetData sock <$> recv sock 4096
 
@@ -69,7 +70,7 @@ ndNew sock = NetData sock <$> recv sock 4096
 -- CGI variables, and a channel which can retrieve the post body in 4k chunks
 getSCGI :: Socket -> IO CGI
 getSCGI sock = do
-    env <- newEmptyMVar 
+    env <- newEmptyMVar
     chan <- newChan
     _ <- forkIO $ do
         (input, ndx) <- netstring =<< ndNew sock
@@ -92,7 +93,7 @@ getSCGI sock = do
               bb <- readChan x
               if B.length bb == 0 then sendBlocks k buf2 (-1) >> sClose k
               else writeBody x k (B.concat [buf2, bb])
-        recurse n nnd ch = do
+        recurse n nnd ch =
               if n <= 0 then writeChan ch B.empty
               else do (b,nnd')<-ndGet (min blksiz n) nnd
                       writeChan ch b
@@ -111,10 +112,10 @@ sendResponse :: CGI -> HTTPHeaders -> IO ()
 sendResponse rsp = putMVar (cgiRspHeaders rsp)
 
 writeResponse :: CGI -> PostBody -> IO ()
-writeResponse rsp x = writeChan (cgiRspBody rsp) x
+writeResponse rsp = writeChan (cgiRspBody rsp)
 
 sendBlocks :: Socket -> B.ByteString -> Int -> IO B.ByteString
-sendBlocks s bs n = if B.length bs < n then return bs else do 
+sendBlocks s bs n = if B.length bs < n then return bs else do
   sent <- send s bs
   let res = B.drop sent bs
   if B.length res == 0 then return res else sendBlocks s res n
@@ -125,7 +126,7 @@ doListen port loop = withSocketsDo $ bracket (listenOn (PortNumber (fromIntegral
 defaultContentType :: String
 defaultContentType = "text/html; charset=ISO-8859-1"
 
-data NetData = NetData { 
+data NetData = NetData {
   _ndSocket :: Socket,
   ndBuf :: B.ByteString
 } deriving (Show)
@@ -154,11 +155,11 @@ doCGI f = do
   writeResponse a B.empty
 
 writeBlocks :: B.ByteString -> IO ()
-writeBlocks = B.putStr 
+writeBlocks = B.putStr
 
 getCGI :: IO CGI
 getCGI = do
-    env <- newEmptyMVar 
+    env <- newEmptyMVar
     chan <- newChan
     vars <- getEnvironment
     putMVar env vars
@@ -176,7 +177,7 @@ getCGI = do
         writeBody x buf = do
               writeBlocks buf
               bb <- readChan x
-              if B.length bb > 0 then writeBody x bb else return ()
+              when (B.length bb > 0) (writeBody x bb)
         recurse n nnd ch = do
               if n <= 0 then writeChan ch B.empty
               else do (b,nnd')<-ndGet (min blksiz n) nnd
