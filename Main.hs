@@ -15,7 +15,7 @@ import Data.Char (isSpace)
 import Data.Maybe (fromJust, fromMaybe, isNothing)
 import Data.List (isSuffixOf, isPrefixOf)
 import System.Environment (getArgs)
-import Control.Concurrent (newEmptyMVar, takeMVar, putMVar, MVar(..), forkOS)
+import Control.Concurrent (newEmptyMVar, takeMVar, putMVar, MVar, forkOS)
 import Database.PostgreSQL.LibPQ
 import Control.Monad (forever)
 import Control.Exception (catch, SomeException)
@@ -96,7 +96,7 @@ git_main repobase dtree err404 db cgir = do
                  Just _ -> error "nvx cannot match this"
       jsess = fromMaybe "" (lookup "JSESSIONID" cookies)
       treeish = case treeishx of {Nothing -> dtree; Just "" -> dtree; Just x -> x }
-  sess <- if "/index.html" `isSuffixOf` uu then makeRequest db (jsess, treeish)
+  sess <- if "index.html" `isSuffixOf` uu then makeRequest db (jsess, treeish)
                                          else return $ SessionContext ["","","","",""]
   putStrLn ("serving "++uu++ " -- " ++ show sess ++ "/" ++ show jsess ++ "/" ++ show treeish )
 
@@ -104,7 +104,12 @@ git_main repobase dtree err404 db cgir = do
     DbError dberr -> do
       sendResponse cgir[("Status","503 Database error"),("Content-Type","text/html")]
       writeResponse cgir $ B.concat ["Database connection error: ", dberr]
-    _ -> if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else do
+    _ -> if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else
+      if not (noUser sess) && (null uu || uu == "index.html") then
+        let SessionContext (_:_:rol:_) = sess
+            ru = "/app/home/" ++ (if rol == "issuer" then "company" else "investor")
+         in sendRedirect cgir ru
+      else do
       let treeishfdb = getVursionFromSession sess
           rgit = readGit repo treeish
           mt = mimeType uu
@@ -134,6 +139,7 @@ git_main repobase dtree err404 db cgir = do
 -- Session stuff
 -----------------------------------------------------------------------------------------------
 
+noUser :: SessionContext -> Bool
 noUser (SessionContext a) = B.null (head a)
 
 type ReqRsp a b =  MVar (a, MVar b)
@@ -168,6 +174,7 @@ databaser dbConn = do
     putMVar rsp =<< getsess conn req vurs
   return inbox
 
+varchar :: Oid
 varchar = Oid 1043
 
 getsess :: IORef (Connection, B.ByteString) -> String -> String -> IO SessionContext
@@ -181,7 +188,7 @@ getsess iconn js vurs = do
   -- if cc is Nothing, I have to complain loudly?
   -- certainly if conn is nothing, I do
   cd <- if isNothing cc then do
-           print "Resetting database connection"
+           print ("Resetting database connection" :: String)
            nconn <- connectdb nret
            erm <- fmap (fromMaybe "") (errorMessage nconn)
            print erm
