@@ -1,29 +1,10 @@
 {-# LANGUAGE  OverloadedStrings, FlexibleContexts #-}
 
+import Preface
 import Adaptor.SCGI
 import Junction.Git (revparse, lookupCommit, commitTreeEntry, lookupBlob
   ,openGitRepository, blobEntryOid)
-
-import qualified Data.ByteString.Char8 as B (ByteString, concat, pack, unpack, readFile, null)
-import Data.String (fromString)
-import qualified Data.Text as T (pack)
-import Network.URI (unEscapeString)
-import Network.Mime (defaultMimeLookup)
-import Text.Regex (mkRegex, matchRegex)
-import Text.Regex.Posix ((=~))
-import Data.Char (isSpace)
-import Data.Maybe (fromJust, fromMaybe, isNothing)
-import Data.List (isSuffixOf, isPrefixOf)
-import System.Environment (getArgs)
-import Control.Concurrent (newEmptyMVar, takeMVar, putMVar, MVar, forkOS)
-import Database.PostgreSQL.LibPQ
-import Control.Monad (forever)
-import Control.Exception (catch, SomeException)
-import Control.Applicative ((<$>))
-
-import Data.IORef
-
-import Debug.Trace
+import qualified PostgreSQL as PG
 
 (-/-) :: Monad m => m (Either a b) -> (b -> m (Either a c)) -> m (Either a c)
 (-/-) x y = x >>= either (return . Left) y
@@ -36,7 +17,7 @@ main = do
   db <- databaser dbase
   runSCGI 10 port (git_main rbase dtree err404 db)
 
-readGit :: String -> String -> String -> IO (Either String B.ByteString)
+readGit :: String -> String -> String -> IO (Either String ByteString)
 readGit path vers filnam =
   if vers == "-" then rf ( path ++ filnam ) else
   catch (openGitRepository path -/- getBlob) (\x -> return (Left (show (x :: SomeException)  ) ) )
@@ -45,7 +26,7 @@ readGit path vers filnam =
                          -/- (\aa -> commitTreeEntry repo aa (fromString filnam))
                          -/- (lookupBlob repo . blobEntryOid)
       -- a <- trace v $ resolveReference (fromString treeish)
-        rf x = catch ( Right <$> B.readFile x ) (\y -> return $ Left (show (y::SomeException)) )
+        rf x = catch ( Right <$> byteReadFile x ) (\y -> return $ Left (show (y::SomeException)) )
 
 readCookies :: String -> [(String,String)]
 readCookies s =
@@ -54,26 +35,26 @@ readCookies s =
      in if null xs then [] else (xs,zs):readCookies (drop 1 ws)
 
 -- substitute readGit for rf  so that the includes resolve properly
-substitute :: B.ByteString -> (String -> IO (Either String B.ByteString)) -> IO B.ByteString
+substitute :: ByteString -> (String -> IO (Either String ByteString)) -> IO ByteString
 substitute r rgx =
-     let rx = "<!--\\{\\{(.*)\\}\\}-->" :: B.ByteString
-         (before, during, after, fnams) = r =~ rx :: (B.ByteString, B.ByteString, B.ByteString, [B.ByteString])
-     in if B.null during then return r else do
-          rfx <- rgx (tail (B.unpack (head fnams)))
-          substitute (B.concat (case rfx of { Left a -> [before, "\r\n\r\n*** ",B.pack a," ***\r\n\r\n", after]; Right rfz -> [before, rfz, after] })) rgx
+     let rx = "<!--\\{\\{(.*)\\}\\}-->" :: ByteString
+         (before, during, after, fnams) = r =~ rx :: (ByteString, ByteString, ByteString, [ByteString])
+     in if byteNull during then return r else do
+          rfx <- rgx (tail (byteStringToString (head fnams)))
+          substitute (byteConcat (case rfx of { Left a -> [before, "\r\n\r\n*** ",stringToByteString a," ***\r\n\r\n", after]; Right rfz -> [before, rfz, after] })) rgx
 
-getVursionFromSession :: SessionContext -> B.ByteString
+getVursionFromSession :: SessionContext -> ByteString
 getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in vurs
 
 mimeType :: String -> String
-mimeType = B.unpack . defaultMimeLookup . T.pack
+mimeType = byteStringToString . defaultMimeLookup . stringToText
 
 isNonBlank :: String -> Bool
 isNonBlank x = let lbr = dropWhile isSpace x in not (null lbr || '#' == head lbr)
 
-insRegex :: B.ByteString -> B.ByteString -> B.ByteString -> B.ByteString
+insRegex :: ByteString -> ByteString -> ByteString -> ByteString
 insRegex g s z = let (before, during, after) = s =~ g
-                  in if B.null during then s else B.concat [before, during, z, after]
+                  in if byteNull during then s else byteConcat [before, during, z, after]
 
 needsLogin :: String -> Bool
 needsLogin s = (isPrefixOf "app/" s || isPrefixOf "amber/" s ) && isSuffixOf "/index.html" s
@@ -85,17 +66,20 @@ git_main repobase dtree err404 db cgir = do
   let repo = if last repobase == '/' then repobase else repobase++"/"
       uux = unEscapeString (fromJust $ lookup "PATH_INFO" hdrs)
       uu = if last uux == '/' then tail uux ++ "index.html" else tail uux
-      qryString qsx = matchRegex (mkRegex "(^|[&?])vursion=([^&]*)") (unEscapeString qsx)
+      qryString :: String -> Maybe String
+      qryString qsx = let z = ((unEscapeString qsx) =~ ("(^|[&?])vursion=([^&]*)"::String) :: [[String]] )
+                      in if null z then Nothing else (let (a:b:c:_) = head z in Just c)
       nvx = maybe Nothing qryString (lookup "QUERY_STRING" hdrs)
       cookies = case lookup "HTTP_COOKIE" hdrs of { Nothing -> []; Just x -> readCookies x }
       (treeishx,setcookie) = case nvx of
                  Nothing -> (lookup "vursion" cookies, Nothing)
-                 Just [_,b] -> (Just b,
+                 Just b -> (Just b,
                                 case b of { "" -> Just "vursion=deleted; path=/; expires=Thu, 01-Jan-1970 00:00:00 GMT";
                                             _ -> Just ("vursion="++b++"; path=/") } )
                  Just _ -> error "nvx cannot match this"
       jsess = fromMaybe "" (lookup "JSESSIONID" cookies)
       treeish = case treeishx of {Nothing -> dtree; Just "" -> dtree; Just x -> x }
+  putStrLn ("pre-db lookup" ++ show (jsess, treeish))
   sess <- if "index.html" `isSuffixOf` uu then makeRequest db (jsess, treeish)
                                          else return $ SessionContext ["","","","",""]
   putStrLn ("serving "++uu++ " -- " ++ show sess ++ "/" ++ show jsess ++ "/" ++ show treeish )
@@ -103,7 +87,7 @@ git_main repobase dtree err404 db cgir = do
   case sess of
     DbError dberr -> do
       sendResponse cgir[("Status","503 Database error"),("Content-Type","text/html")]
-      writeResponse cgir $ B.concat ["Database connection error: ", dberr]
+      writeResponse cgir $ byteConcat ["Database connection error: ", dberr]
     _ -> if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else
       if not (noUser sess) && (null uu || uu == "index.html") then
         let SessionContext (_:_:rol:_) = sess
@@ -123,11 +107,11 @@ git_main repobase dtree err404 db cgir = do
                        (if mt == "text/html" then substitute body rgit >>= addGtm >>= return . addSess (jsess, treeish) sess else return body) >>=
                        writeResponse cgir
           doCat body = do
-              mm <- mapM rgit (filter isNonBlank (lines ( B.unpack body) ))
+              mm <- mapM rgit (filter isNonBlank (lines ( byteStringToString body) ))
               let mmt = mimeType (take (length uu - 4) uu)
               sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
-              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (B.pack ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
-          fmtErr err = B.pack ("failed to read version "++ show treeish ++" of: " ++ uu ++ "\r\n\r\n" ++ err)
+              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (stringToByteString ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
+          fmtErr err = stringToByteString ("failed to read version "++ show treeish ++" of: " ++ uu ++ "\r\n\r\n" ++ err)
 
           sendErr err = do
             sendResponse cgir [("Status","404 Not found"),("Content-Type","text/html")]
@@ -140,20 +124,20 @@ git_main repobase dtree err404 db cgir = do
 -----------------------------------------------------------------------------------------------
 
 noUser :: SessionContext -> Bool
-noUser (SessionContext a) = B.null (head a)
+noUser (SessionContext a) = byteNull (head a)
 
 type ReqRsp a b =  MVar (a, MVar b)
 type DbRequest = (String, String)
-data SessionContext = SessionContext [B.ByteString] | DbError B.ByteString
+data SessionContext = SessionContext [ByteString] | DbError ByteString
 
 instance Show SessionContext where
   show (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in
-    if B.null uid then ""
-    else (B.unpack . B.concat) ["<script>document.sessionState={'userid': " ,enstr uid ,
+    if byteNull uid then ""
+    else (byteStringToString . byteConcat) ["<script>document.sessionState={'userid': " ,enstr uid ,
                             ",'company': " , enstr cmp , ",'role':", enstr rol ,",'intercom':",enstr intercom, "};</script>"]
-    where enstr s = B.concat["'",s,"'"]
+    where enstr s = byteConcat["'",s,"'"]
 --  show _ = "/* SessionContext should never match this */"  -- this is an error and should never happen
-  show (DbError a) = (B.unpack . B.concat) ["*** ",a, " ***"]
+  show (DbError a) = (byteStringToString . byteConcat) ["*** ",a, " ***"]
 
 makeRequest :: (Show b, Show a) => ReqRsp a b -> a -> IO b
 makeRequest x d = do
@@ -167,29 +151,42 @@ makeRequest x d = do
 databaser :: String -> IO (ReqRsp DbRequest SessionContext)
 databaser dbConn = do
   inbox <- newEmptyMVar
-  idb <- connectdb (fromString dbConn)
+  idb <- PG.connectToDb (fromString dbConn)
   conn <- newIORef ( idb, fromString dbConn)
+  PG.sendQuery idb (PG.Parse "q1" "select * from session.check_session($1, $2)" [1043, 1043])
   _ <- forkOS $ forever $ do
     ( (req,vurs), rsp) <- takeMVar inbox -- get a request
     putMVar rsp =<< getsess conn req vurs
   return inbox
 
-varchar :: Oid
-varchar = Oid 1043
+-- varchar :: Oid
+-- varchar = Oid 1043
 
-getsess :: IORef (Connection, B.ByteString) -> String -> String -> IO SessionContext
+getsess :: IORef (PG.Postgres, ByteString) -> String -> String -> IO SessionContext
 getsess iconn js vurs = do
   (conn, nret) <- readIORef iconn
-  cc <- execParams conn "select * from session.check_session($1, $2)"
-                        [Just (varchar, B.pack js, Text),
-                         Just (varchar, B.pack vurs, Text) ]
-                        Text
+
+  PG.sendQuery conn (PG.Bind "" "q1" [Just (stringToByteString js), Just (stringToByteString vurs)] )
+
+  cc <- PG.doQuery conn (PG.Execute "" 1)
+  print cc
+
+  PG.sendQuery conn (PG.ClosePortal "")
+  zz <- PG.doQuery conn PG.Sync
+  print zz
+
+  let (PG.ResultSet rd dr fz) = cc
+  if null dr then return $ SessionContext [ "","","","",""]
+  else let dra = head dr in return (SessionContext (map (maybe "" id) dra))
+
   -- print (js, vurs, cc)
   -- if cc is Nothing, I have to complain loudly?
   -- certainly if conn is nothing, I do
+{-
   cd <- if isNothing cc then do
            print ("Resetting database connection" :: String)
-           nconn <- connectdb nret
+           nconn <- PG.connectToDb nret
+
            erm <- fmap (fromMaybe "") (errorMessage nconn)
            print erm
            writeIORef iconn (nconn, nret)
@@ -199,7 +196,12 @@ getsess iconn js vurs = do
                         Text
         else return cc
   (conn,_) <- readIORef iconn
-  erm <- fmap (fromMaybe "") (errorMessage conn)
+  -}
+
+-- WHAT about errors
+--  erm <- fmap (fromMaybe "") (errorMessage conn)
+ {-
+  let cd = cc
   case cd of
             Nothing -> do
               print (B.concat ["***** ====> ",erm])
@@ -214,6 +216,7 @@ getsess iconn js vurs = do
                           m <- mapM ( \y -> return . fromMaybe "" =<< getvalue dbres 0 y) [0..nf-1]
                           -- print m
                           return (SessionContext m)
-addSess :: DbRequest -> SessionContext -> B.ByteString -> B.ByteString
-addSess (jid,vurs) sess s = let (before, during, after) = s =~ ("<head>" :: B.ByteString)
-                                 in if B.null during then s else B.concat [ before, during, B.pack $ show sess, after]
+  -}
+addSess :: DbRequest -> SessionContext -> ByteString -> ByteString
+addSess (jid,vurs) sess s = let (before, during, after) = s =~ ("<head>" :: ByteString)
+                                 in if byteNull during then s else byteConcat [ before, during, stringToByteString $ show sess, after]

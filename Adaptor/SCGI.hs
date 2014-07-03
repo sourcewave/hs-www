@@ -4,6 +4,10 @@ module Adaptor.SCGI ( runSCGI, CGI(..), cgiGetHeaders, cgiGetBody,
     writeResponse, sendResponse, sendRedirect, doCGI
   ) where
 
+import Preface
+import qualified Data.ByteString as B
+
+{-
 import Control.Applicative
 import Control.Exception (SomeException, bracket, catch)
 import Control.Concurrent ( forkIO, newQSem, waitQSem, signalQSem, MVar, Chan,
@@ -19,11 +23,12 @@ import Data.Char (digitToInt, isDigit)
 import Debug.Trace
 
 import Control.Monad (join, when)
+-}
 
 handler :: (CGI -> IO ()) -> QSem -> Socket -> IO ()
 handler f qsem socket = do
   waitQSem qsem
-  (sock, _) <- accept socket
+  (sock, _) <- sktAccept socket
   _ <- forkIO $ do
       catch (doSCGI f sock) (\e -> hPutStrLn stderr $ "scgi: "++show (e::SomeException))
       signalQSem qsem
@@ -45,8 +50,9 @@ toInt z = foldl (\x y -> 10*x+y) 0 (map digitToInt (filter isDigit z))
 
 netstring :: NetData -> IO (B.ByteString, NetData)
 netstring nd =
-  let (lens, rest) = B.break (== ':') (ndBuf nd)
-      len = toInt (B.unpack lens)
+  let (lenx, rest) = B.break (== fromIntegral (ord ':')) (ndBuf nd)
+      lens = byteStringToString lenx
+      len = toInt lens
    in do
         (res, ndxx) <- ndGet len nd { ndBuf = B.drop 1 rest }
         (_,ndxxx) <- ndGet 1 ndxx
@@ -57,14 +63,14 @@ ndGet x nd@(NetData sok buf) =
   if x <= B.length buf then let (bh, bt) = B.splitAt x buf in return (bh, nd { ndBuf = bt } )
   else do
     let y = x - B.length buf
-    more <- recv sok (max y 4096)
+    more <- sktRecv sok (max y 4096)
     if B.length more > 0 then do
       (res, ndx) <-  ndGet y nd { ndBuf = more }
       return ( B.concat [buf, res], ndx )
     else return (ndBuf nd, nd { ndBuf = B.empty})
 
 ndNew :: Socket -> IO NetData
-ndNew sock = NetData sock <$> recv sock 4096
+ndNew sock = NetData sock <$> sktRecv sock 4096
 
 -- | Given a socket, sparks a thread to read it, and returns an MVar which can retrieve the
 -- CGI variables, and a channel which can retrieve the post body in 4k chunks
@@ -74,7 +80,7 @@ getSCGI sock = do
     chan <- newChan
     _ <- forkIO $ do
         (input, ndx) <- netstring =<< ndNew sock
-        let vars = (headersx . B.unpack) input
+        let vars = headersx ( byteStringToString input)
             len = case lookup "CONTENT_LENGTH" vars of { Nothing -> 0; Just x -> toInt x }
         putMVar env vars
         recurse len ndx chan
@@ -82,10 +88,9 @@ getSCGI sock = do
     wchan <- newChan
     _ <- forkIO $ do
         hd <- takeMVar hdrs
-        let hdx = B.concat . intersperse (B.pack "\r\n") $ [B.pack (n++": "++v) | (n,v) <- hd] ++ [B.empty,B.empty]
         -- I could send the headers immediately and then wait for the body, OR insert into the output stream
         -- sendFully sock hdx
-        writeBody wchan sock hdx
+        writeBody wchan sock (genhdrs hd)
     return $ CGI env chan hdrs wchan
   where blksiz = 4096
         writeBody x k buf = do
@@ -104,6 +109,8 @@ getSCGI sock = do
         split str = let (token, rest) = break (== '\NUL') str
                      in if null rest then [token] else  token : split (tail rest)
 
+genhdrs :: HTTPHeaders -> ByteString 
+genhdrs hd =  B.concat . intersperse (stringToByteString "\r\n") $ [ stringToByteString (n++": "++v) | (n,v) <- hd] ++ [B.empty,B.empty]
 
 sendRedirect :: CGI -> String -> IO ()
 sendRedirect rsp loc = putMVar (cgiRspHeaders rsp) [("Status","302 Found"),("Location",loc)]
@@ -116,7 +123,7 @@ writeResponse rsp = writeChan (cgiRspBody rsp)
 
 sendBlocks :: Socket -> B.ByteString -> Int -> IO B.ByteString
 sendBlocks s bs n = if B.length bs < n then return bs else do
-  sent <- send s bs
+  sent <- sktSend s bs
   let res = B.drop sent bs
   if B.length res == 0 then return res else sendBlocks s res n
 
@@ -168,10 +175,9 @@ getCGI = do
     wchan <- newChan
     _ <- forkIO $ do
         hd <- takeMVar hdrs
-        let hdx = B.concat . intersperse (B.pack "\r\n") $ [B.pack (n++": "++v) | (n,v) <- hd] ++ [B.empty,B.empty]
         -- I could send the headers immediately and then wait for the body, OR insert into the output stream
         -- sendFully sock hdx
-        writeBody wchan hdx
+        writeBody wchan (genhdrs hd)
     return $ CGI env chan hdrs wchan
   where blksiz = 4096
         writeBody x buf = do

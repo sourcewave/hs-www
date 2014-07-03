@@ -8,18 +8,17 @@ cabal-version:       >= 1.20
 Build-type:          Simple
 
 Library
-  Build-Depends:     base, bytestring, network, hlibgit2, unix
+  Build-Depends:     preface, base, bytestring, hlibgit2, unix, postgrehs
   Exposed-Modules:   Adaptor.SCGI, Junction.Git
   Ghc-options:       -Wall -threaded
   Hs-Source-Dirs:    .
   Default-Language:  Haskell2010
 
-Executable scgi
-  Build-Depends:     base, bytestring, network, hlibgit2, text, unix
+Executable vursions
+  Build-Depends:     preface, base, bytestring, hlibgit2, unix, postgrehs
     , regex-posix
-    , regex-compat
+--    , regex-compat
     , mime-types
-    , postgresql-libpq
   Main-Is:           Main.hs
   Hs-Source-Dirs:    .
   Ghc-options:       -Wall -static -threaded
@@ -61,13 +60,6 @@ Executable wssrvr
 --   Ghc-options: -Wall
 --   Default-language:   Haskell2010
 --   Build-depends:      base, bytestring, network
-
-Executable hspg
-  Main-is: HsPg.hs
-  Hs-Source-Dirs: examples, .
-  Ghc-options: -Wall
-  Default-language:   Haskell2010
-  Build-depends:      base, bytestring, network, binary, text
 
 Benchmark bench-sha
     type:       exitcode-stdio-1.0
