@@ -9,7 +9,6 @@ import Data.String (fromString)
 import qualified Data.Text as T (pack)
 import Network.URI (unEscapeString)
 import Network.Mime (defaultMimeLookup)
-import Text.Regex (mkRegex, matchRegex)
 import Text.Regex.Posix ((=~))
 import Data.Char (isSpace)
 import Data.Maybe (fromJust, fromMaybe, isNothing)
@@ -85,12 +84,14 @@ git_main repobase dtree err404 db cgir = do
   let repo = if last repobase == '/' then repobase else repobase++"/"
       uux = unEscapeString (fromJust $ lookup "PATH_INFO" hdrs)
       uu = if last uux == '/' then tail uux ++ "index.html" else tail uux
-      qryString qsx = matchRegex (mkRegex "(^|[&?])vursion=([^&]*)") (unEscapeString qsx)
+      qryString :: String -> Maybe String
+      qryString qsx = let z = ((unEscapeString qsx) =~ ("(^|[&?])vursion=([^&]*)"::String) ::[[String]])
+                      in if null z then Nothing else (let (a:b:c:_) = head z in Just c)
       nvx = maybe Nothing qryString (lookup "QUERY_STRING" hdrs)
       cookies = case lookup "HTTP_COOKIE" hdrs of { Nothing -> []; Just x -> readCookies x }
       (treeishx,setcookie) = case nvx of
                  Nothing -> (lookup "vursion" cookies, Nothing)
-                 Just [_,b] -> (Just b,
+                 Just b -> (Just b,
                                 case b of { "" -> Just "vursion=deleted; path=/; expires=Thu, 01-Jan-1970 00:00:00 GMT";
                                             _ -> Just ("vursion="++b++"; path=/") } )
                  Just _ -> error "nvx cannot match this"
@@ -118,7 +119,8 @@ git_main repobase dtree err404 db cgir = do
              case a of
                Left y -> return x
                Right y -> return $ insRegex "<body[^>]*>" x y
-          headers = ("Content-Type",mt) : ("X-Vursions", treeishfdb) : case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
+          headersa = ("Content-Type",mt) : case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
+          headers = [("X-Vursion",treeish)] ++ headersa
           doHtml body = sendResponse cgir (("Status","200 OK") : headers) >>
                        (if mt == "text/html" then substitute body rgit >>= addGtm >>= return . addSess (jsess, treeish) sess else return body) >>=
                        writeResponse cgir

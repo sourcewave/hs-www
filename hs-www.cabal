@@ -17,7 +17,6 @@ Library
 Executable scgi
   Build-Depends:     base, bytestring, network, hlibgit2, text, unix
     , regex-posix
-    , regex-compat
     , mime-types
     , postgresql-libpq
   Main-Is:           Main.hs
