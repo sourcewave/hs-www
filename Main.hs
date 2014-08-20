@@ -14,8 +14,15 @@ main = do
   args <- getArgs
   let sport:rbase:dtree:err404:dbase:_ = args
       port = read sport :: Int
-  db <- databaser dbase
-  runSCGI 10 port (git_main rbase dtree err404 db)
+
+  inbox <- newEmptyMVar
+  conn <- newIORef ( undefined, dbase)
+  reconnect conn
+  _ <- forkOS $ forever $ do
+    ( (req,vurs), rsp) <- takeMVar inbox -- get a request
+    putMVar rsp =<< getsess conn req vurs
+
+  runSCGI 10 port (git_main rbase dtree err404 inbox)
 
 readGit :: String -> String -> String -> IO (Either String ByteString)
 readGit path vers filnam =
@@ -39,22 +46,22 @@ substitute :: ByteString -> (String -> IO (Either String ByteString)) -> IO Byte
 substitute r rgx =
      let rx = "<!--\\{\\{(.*)\\}\\}-->" :: ByteString
          (before, during, after, fnams) = r =~ rx :: (ByteString, ByteString, ByteString, [ByteString])
-     in if byteNull during then return r else do
-          rfx <- rgx (tail (byteStringToString (head fnams)))
-          substitute (byteConcat (case rfx of { Left a -> [before, "\r\n\r\n*** ",stringToByteString a," ***\r\n\r\n", after]; Right rfz -> [before, rfz, after] })) rgx
+     in if strNull during then return r else do
+          rfx <- rgx (tail (asString (head fnams)))
+          substitute (strCat (case rfx of { Left a -> [before, "\r\n\r\n*** ",asByteString a," ***\r\n\r\n", after]; Right rfz -> [before, rfz, after] })) rgx
 
 getVursionFromSession :: SessionContext -> ByteString
 getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in vurs
 
 mimeType :: String -> String
-mimeType = byteStringToString . defaultMimeLookup . stringToText
+mimeType = asString . defaultMimeLookup . asText
 
 isNonBlank :: String -> Bool
-isNonBlank x = let lbr = dropWhile isSpace x in not (null lbr || '#' == head lbr)
+isNonBlank x = let lbr = dropWhile isSpace x in not (strNull lbr || '#' == head lbr)
 
 insRegex :: ByteString -> ByteString -> ByteString -> ByteString
 insRegex g s z = let (before, during, after) = s =~ g
-                  in if byteNull during then s else byteConcat [before, during, z, after]
+                  in if strNull during then s else strCat [before, during, z, after]
 
 needsLogin :: String -> Bool
 needsLogin s = (isPrefixOf "app/" s || isPrefixOf "amber/" s ) && isSuffixOf "/index.html" s
@@ -87,9 +94,9 @@ git_main repobase dtree err404 db cgir = do
   case sess of
     DbError dberr -> do
       sendResponse cgir[("Status","503 Database error"),("Content-Type","text/html")]
-      writeResponse cgir $ byteConcat ["Database connection error: ", dberr]
+      writeResponse cgir $ strCat ["Database connection error: ", dberr]
     _ -> if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else
-      if not (noUser sess) && (null uu || uu == "index.html") then
+      if not (noUser sess) && (strNull uu || uu == "index.html") then
         let SessionContext (_:_:rol:_) = sess
             ru = "/app/home/" ++ (if rol == "issuer" then "company" else "investor")
          in sendRedirect cgir ru
@@ -102,16 +109,16 @@ git_main repobase dtree err404 db cgir = do
              case a of
                Left y -> return x
                Right y -> return $ insRegex "<body[^>]*>" x y
-          headers = ("Content-Type",mt) : ("X-Vursion", byteStringToString treeishfdb) : case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
+          headers = ("Content-Type",mt) : ("X-Vursion", asString treeishfdb) : case setcookie of { Nothing -> []; Just b -> [("Set-Cookie",b)] }
           doHtml body = sendResponse cgir (("Status","200 OK") : headers) >>
                        (if mt == "text/html" then substitute body rgit >>= addGtm >>= return . addSess (jsess, treeish) sess else return body) >>=
                        writeResponse cgir
           doCat body = do
-              mm <- mapM rgit (filter isNonBlank (lines ( byteStringToString body) ))
+              mm <- mapM rgit (filter isNonBlank (lines ( asString body) ))
               let mmt = mimeType (take (length uu - 4) uu)
               sendResponse cgir ([("Status","200 OK"),("Content-Type",mmt)]++tail headers)
-              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (stringToByteString ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
-          fmtErr err = stringToByteString ("failed to read version "++ show treeish ++" of: " ++ uu ++ "\r\n\r\n" ++ err)
+              mapM_ (\z -> case z of { Right a -> writeResponse cgir a; Left b -> putStrLn b >> writeResponse cgir (asByteString ("\r\n/* *** "++b++" *** */\r\n")) } ) mm
+          fmtErr err = asByteString ("failed to read version "++ show treeish ++" of: " ++ uu ++ "\r\n\r\n" ++ err)
 
           sendErr err = do
             sendResponse cgir [("Status","404 Not found"),("Content-Type","text/html")]
@@ -124,7 +131,7 @@ git_main repobase dtree err404 db cgir = do
 -----------------------------------------------------------------------------------------------
 
 noUser :: SessionContext -> Bool
-noUser (SessionContext a) = byteNull (head a)
+noUser (SessionContext a) = strNull (head a)
 
 type ReqRsp a b =  MVar (a, MVar b)
 type DbRequest = (String, String)
@@ -132,12 +139,12 @@ data SessionContext = SessionContext [ByteString] | DbError ByteString
 
 instance Show SessionContext where
   show (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in
-    if byteNull uid then ""
-    else (byteStringToString . byteConcat) ["<script>document.sessionState={'userid': " ,enstr uid ,
+    if strNull uid then ""
+    else (asString . strCat) ["<script>document.sessionState={'userid': " ,enstr uid ,
                             ",'company': " , enstr cmp , ",'role':", enstr rol ,",'intercom':",enstr intercom, "};</script>"]
-    where enstr s = byteConcat["'",s,"'"]
+    where enstr s = strCat["'",s,"'"]
 --  show _ = "/* SessionContext should never match this */"  -- this is an error and should never happen
-  show (DbError a) = (byteStringToString . byteConcat) ["*** ",a, " ***"]
+  show (DbError a) = (asString . strCat) ["*** ",a, " ***"]
 
 makeRequest :: (Show b, Show a) => ReqRsp a b -> a -> IO b
 makeRequest x d = do
@@ -148,37 +155,53 @@ makeRequest x d = do
   return z
 
 -- | This function starts a thread which communicates with the database to retrieve session information
-databaser :: String -> IO (ReqRsp DbRequest SessionContext)
-databaser dbConn = do
-  inbox <- newEmptyMVar
-  idb <- PG.connectToDb (fromString dbConn)
-  conn <- newIORef ( idb, fromString dbConn)
-  PG.sendQuery idb (PG.Parse "q1" "select * from session.check_session($1, $2)" [1043, 1043])
-  _ <- forkOS $ forever $ do
-    ( (req,vurs), rsp) <- takeMVar inbox -- get a request
-    putMVar rsp =<< getsess conn req vurs
-  return inbox
+-- databaser :: String -> IO (ReqRsp DbRequest SessionContext)
 
 -- varchar :: Oid
 -- varchar = Oid 1043
 
-getsess :: IORef (PG.Postgres, ByteString) -> String -> String -> IO SessionContext
+reconnect :: IORef (PG.Postgres, String) -> IO PG.Postgres
+reconnect ior = do
+  (_, fsdb) <- readIORef ior
+  idb <- PG.connectToDb fsdb
+  -- what happens if there is a connection error?
+  -- erm <- fmap (fromMaybe "") (PG.errorMessage idb)
+  -- print erm
+  
+  -- what to do if there was an error?
+  PG.sendQuery idb (PG.Parse "q1" "select * from session.check_session($1, $2)" [1043, 1043])
+  writeIORef ior (idb, fsdb)
+  return idb
+
+doGetsess conn js vurs = do
+  PG.sendQuery conn (PG.Bind "" "q1" [Just (asByteString js), Just (asByteString vurs)] )
+  PG.sendQuery conn (PG.Execute "" 1)
+  PG.sendQuery conn (PG.ClosePortal "")
+  cc <- PG.doQuery conn PG.Sync
+  print cc
+  return cc
+
+getsess :: IORef (PG.Postgres, String) -> String -> String -> IO SessionContext
 getsess iconn js vurs = do
   (conn, nret) <- readIORef iconn
+  cc <- doGetsess conn js vurs
 
-  PG.sendQuery conn (PG.Bind "" "q1" [Just (stringToByteString js), Just (stringToByteString vurs)] )
+-- I could get an EndSession (or maybe an Error? )
+  case cc of
+    PG.EndSession -> do
+      print ("Resetting database connection" :: String)
+      reconnect iconn
+      -- is this a bottomless recursion ?
+      getsess iconn js vurs
 
-  cc <- PG.doQuery conn (PG.Execute "" 1)
-  print cc
+    PG.ResultSet rd fdr fz ->
+      if null fdr then return $ SessionContext [ "","","","",""]
+      else let dra = head fdr in return (SessionContext (map (maybe "" id) dra))
 
-  PG.sendQuery conn (PG.ClosePortal "")
-  zz <- PG.doQuery conn PG.Sync
-  print zz
-
-  let (PG.ResultSet rd dr fz) = cc
-  if null dr then return $ SessionContext [ "","","","",""]
-  else let dra = head dr in return (SessionContext (map (maybe "" id) dra))
-
+    _ -> do
+      print ("unkown response from database: " ++ show cc)
+      error (show cc)
+      
   -- print (js, vurs, cc)
   -- if cc is Nothing, I have to complain loudly?
   -- certainly if conn is nothing, I do
@@ -219,4 +242,4 @@ getsess iconn js vurs = do
   -}
 addSess :: DbRequest -> SessionContext -> ByteString -> ByteString
 addSess (jid,vurs) sess s = let (before, during, after) = s =~ ("<head>" :: ByteString)
-                                 in if byteNull during then s else byteConcat [ before, during, stringToByteString $ show sess, after]
+                                 in if strNull during then s else strCat [ before, during, asByteString $ show sess, after]

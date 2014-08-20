@@ -51,7 +51,7 @@ toInt z = foldl (\x y -> 10*x+y) 0 (map digitToInt (filter isDigit z))
 netstring :: NetData -> IO (B.ByteString, NetData)
 netstring nd =
   let (lenx, rest) = B.break (== fromIntegral (ord ':')) (ndBuf nd)
-      lens = byteStringToString lenx
+      lens = asString lenx
       len = toInt lens
    in do
         (res, ndxx) <- ndGet len nd { ndBuf = B.drop 1 rest }
@@ -80,7 +80,7 @@ getSCGI sock = do
     chan <- newChan
     _ <- forkIO $ do
         (input, ndx) <- netstring =<< ndNew sock
-        let vars = headersx ( byteStringToString input)
+        let vars = headersx ( asString input)
             len = case lookup "CONTENT_LENGTH" vars of { Nothing -> 0; Just x -> toInt x }
         putMVar env vars
         recurse len ndx chan
@@ -110,7 +110,7 @@ getSCGI sock = do
                      in if null rest then [token] else  token : split (tail rest)
 
 genhdrs :: HTTPHeaders -> ByteString 
-genhdrs hd =  B.concat . intersperse (stringToByteString "\r\n") $ [ stringToByteString (n++": "++v) | (n,v) <- hd] ++ [B.empty,B.empty]
+genhdrs hd =  B.concat . intersperse "\r\n" $ [ asByteString (n++": "++v) | (n,v) <- hd] ++ [B.empty,B.empty]
 
 sendRedirect :: CGI -> String -> IO ()
 sendRedirect rsp loc = putMVar (cgiRspHeaders rsp) [("Status","302 Found"),("Location",loc)]
@@ -118,8 +118,8 @@ sendRedirect rsp loc = putMVar (cgiRspHeaders rsp) [("Status","302 Found"),("Loc
 sendResponse :: CGI -> HTTPHeaders -> IO ()
 sendResponse rsp = putMVar (cgiRspHeaders rsp)
 
-writeResponse :: CGI -> PostBody -> IO ()
-writeResponse rsp = writeChan (cgiRspBody rsp)
+writeResponse :: Stringy a => CGI -> a -> IO ()
+writeResponse rsp = writeChan (cgiRspBody rsp) . asByteString
 
 sendBlocks :: Socket -> B.ByteString -> Int -> IO B.ByteString
 sendBlocks s bs n = if B.length bs < n then return bs else do

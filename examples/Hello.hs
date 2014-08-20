@@ -1,14 +1,14 @@
-{-# LANGUAGE OverloadedStrings #-}
+-- {-# LANGUAGE OverloadedStrings #-}
 
 import Adaptor.SCGI
-import qualified Data.ByteString.Char8 as B (pack)
+import Preface
 
 cgiMain :: CGI -> IO ()
 cgiMain r = do 
    a <- cgiGetHeaders r
    sendResponse r [("Status", "200 OK"), ("Content-Type", "text/html")]
    writeResponse r "<html><body><h1>Hello, from CGI</h1>"
-   writeResponse r (B.pack (show a))
+   writeResponse r (show a)
    writeResponse r "</body></html>"
 
 

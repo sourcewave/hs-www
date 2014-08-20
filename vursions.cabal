@@ -1,10 +1,10 @@
-Name:                hs-www
+Name:                vursions
 Version:             0.1
 License:             PublicDomain
 Maintainer:          r0ml@mac.com
 Category:            Web
 Synopsis:            A Haskell library for writing SCGI programs.
-cabal-version:       >= 1.20
+cabal-version:       >= 1.18
 Build-type:          Simple
 
 Library
@@ -17,7 +17,6 @@ Library
 Executable vursions
   Build-Depends:     preface, base, bytestring, hlibgit2, unix, postgrehs
     , regex-posix
---    , regex-compat
     , mime-types
   Main-Is:           Main.hs
   Hs-Source-Dirs:    .
@@ -31,28 +30,35 @@ Executable hello
   Hs-Source-Dirs:    examples
   Ghc-options:       -Wall 
   Default-language:   Haskell2010
-  Build-depends:     hs-www, base, bytestring
+  Build-depends:     vursions, base, preface
+
+Executable oauth_callback
+  Main-is: OauthCallback.hs
+  Hs-Source-Dirs: examples
+  Ghc-options: -Wall
+  Default-language: Haskell2010
+  Build-depends: vursions, preface, base
 
 Executable poster
   Main-is: Poster.hs
   Hs-Source-Dirs:  examples
   Ghc-options: -Wall
   Default-language:   Haskell2010
-  Build-depends:     hs-www, base, bytestring, network
+  Build-depends:     vursions, preface, base
 
-Executable wsclnt
-  Main-is: WSClient.hs
-  Hs-Source-Dirs:  examples, .
-  Ghc-options: -Wall
-  Default-language:   Haskell2010
-  Build-depends:      base, bytestring, network, text, mtl, cryptohash, binary, entropy, base64-bytestring
+-- Executable wsclnt
+--   Main-is: WSClient.hs
+--   Hs-Source-Dirs:  examples, .
+--   Ghc-options: -Wall
+--   Default-language:   Haskell2010
+--   Build-depends:      base, preface, base, cryptohash, entropy, base64-bytestring
 
-Executable wssrvr
-  Main-is: WSServer.hs
-  Hs-Source-Dirs:  examples, .
-  Ghc-options: -Wall
-  Default-language:   Haskell2010
-  Build-depends:      base, bytestring, network, text, mtl, cryptohash, binary, entropy, base64-bytestring
+-- Executable wssrvr
+--   Main-is: WSServer.hs
+--   Hs-Source-Dirs:  examples, .
+--   Ghc-options: -Wall
+--   Default-language:   Haskell2010
+--   Build-depends:      base, preface, cryptohash, entropy, base64-bytestring
 
 -- Executable wwwclnt
 --   Main-is: HTTPClient.hs
@@ -65,5 +71,5 @@ Benchmark bench-sha
     type:       exitcode-stdio-1.0
     Hs-Source-Dirs: examples
     main-is:    BenchSHA.hs
-    build-depends: base, criterion, bytestring, SHA, cryptohash
+    build-depends: preface, base, criterion, SHA, cryptohash
     Default-language:   Haskell2010
