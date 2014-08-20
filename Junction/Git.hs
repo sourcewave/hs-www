@@ -2,21 +2,9 @@
 
 module Junction.Git where
 
+import Preface
 import Bindings.Libgit2
 
-import Foreign.Concurrent (newForeignPtr)
-import Foreign.C.String (withCString, peekCString)
-import Foreign.C.Types (CInt)
-import Foreign.Marshal (alloca, fromBool)
-import Foreign.Storable (peek)
--- import Control.Exception (SomeException)
-import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, mallocForeignPtr, castForeignPtr)
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
-import Control.Applicative ((<$>))
--- import Data.Time.LocalTime (ZonedTime, utcToZonedTime, minutesToTimeZone)
--- import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Data.ByteString (ByteString, packCStringLen)
-import System.Posix.ByteString.FilePath (withFilePath)
 import Control.Monad (ap)
 
 type GitError = String
@@ -81,7 +69,7 @@ commitTreeEntry repo (Commit c) path = do
 
 treeEntry :: Tree -> TreeFilePath -> IO (Either GitError TreeEntry)
 treeEntry (LgTree tree) fp = alloca $ \entryPtr ->
-    withFilePath fp $ \pathStr -> withForeignPtr tree $ \treePtr -> do
+    useAsCString fp $ \pathStr -> withForeignPtr tree $ \treePtr -> do
         r <- c'git_tree_entry_bypath entryPtr treePtr pathStr
         if r < 0 then lasterr "getting tree entry" else Right <$> (entryToTreeEntry =<< peek entryPtr)
 

@@ -8,16 +8,14 @@ cabal-version:       >= 1.18
 Build-type:          Simple
 
 Library
-  Build-Depends:     preface, base, bytestring, hlibgit2, unix, postgrehs
+  Build-Depends:     preface, base, hlibgit2, postgrehs
   Exposed-Modules:   Adaptor.SCGI, Junction.Git
   Ghc-options:       -Wall -threaded
   Hs-Source-Dirs:    .
   Default-Language:  Haskell2010
 
 Executable vursions
-  Build-Depends:     preface, base, bytestring, hlibgit2, unix, postgrehs
-    , regex-posix
-    , mime-types
+  Build-Depends:     preface, base, hlibgit2, postgrehs
   Main-Is:           Main.hs
   Hs-Source-Dirs:    .
   Ghc-options:       -Wall -static -threaded

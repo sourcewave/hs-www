@@ -1,7 +1,7 @@
 -- {-# LANGUAGE OverloadedStrings #-}
 
 import Adaptor.SCGI
-import Preface
+-- import Preface
 
 cgiMain :: CGI -> IO ()
 cgiMain r = do 
@@ -16,5 +16,6 @@ cgiMain r = do
 --   setHeader "Content-type" "application/json"
 --   output "Hello"
 
+main :: IO ()
 main = doCGI cgiMain
 
