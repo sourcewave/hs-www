@@ -62,7 +62,7 @@ substitute r rgx =
           substitute (B.concat (case rfx of { Left a -> [before, "\r\n\r\n*** ",B.pack a," ***\r\n\r\n", after]; Right rfz -> [before, rfz, after] })) rgx
 
 getVursionFromSession :: SessionContext -> B.ByteString
-getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in vurs
+getVursionFromSession (SessionContext a) = let uid:cmp:rol:vurs:intercom:reasons:_ = a in vurs
 
 mimeType :: String -> String
 mimeType = B.unpack . defaultMimeLookup . T.pack
@@ -98,7 +98,7 @@ git_main repobase dtree err404 db cgir = do
       jsess = fromMaybe "" (lookup "JSESSIONID" cookies)
       treeish = case treeishx of {Nothing -> dtree; Just "" -> dtree; Just x -> x }
   sess <- if "index.html" `isSuffixOf` uu then makeRequest db (jsess, treeish)
-                                         else return $ SessionContext ["","","","",""]
+                                         else return $ SessionContext ["","","","","",""]
   putStrLn ("serving "++uu++ " -- " ++ show sess ++ "/" ++ show jsess ++ "/" ++ show treeish )
 
   case sess of
@@ -107,7 +107,7 @@ git_main repobase dtree err404 db cgir = do
       writeResponse cgir $ B.concat ["Database connection error: ", dberr]
     _ -> if noUser sess && needsLogin uu then sendRedirect cgir "/login/" else
       if not (noUser sess) && (null uu || uu == "index.html") then
-        let SessionContext (_:_:rol:_) = sess
+        let SessionContext (_:_:rol:_:_:_) = sess
             ru = "/app/home/" ++ (if rol == "issuer" then "company" else "investor")
          in sendRedirect cgir ru
       else do
@@ -149,10 +149,10 @@ type DbRequest = (String, String)
 data SessionContext = SessionContext [B.ByteString] | DbError B.ByteString
 
 instance Show SessionContext where
-  show (SessionContext a) = let uid:cmp:rol:vurs:intercom:_ = a in
+  show (SessionContext a) = let uid:cmp:rol:vurs:intercom:reasons:_ = a in
     if B.null uid then ""
     else (B.unpack . B.concat) ["<script>document.sessionState={'userid': " ,enstr uid ,
-                            ",'company': " , enstr cmp , ",'role':", enstr rol ,",'intercom':",enstr intercom, "};</script>"]
+                            ",'company': " , enstr cmp , ",'role':", enstr rol ,",'intercom':",enstr intercom, ",'reasons':",enstr reasons, "};</script>"]
     where enstr s = B.concat["'",s,"'"]
 --  show _ = "/* SessionContext should never match this */"  -- this is an error and should never happen
   show (DbError a) = (B.unpack . B.concat) ["*** ",a, " ***"]
@@ -182,7 +182,7 @@ varchar = Oid 1043
 getsess :: IORef (Connection, B.ByteString) -> String -> String -> IO SessionContext
 getsess iconn js vurs = do
   (conn, nret) <- readIORef iconn
-  cc <- execParams conn "select * from session.check_session($1, $2)"
+  cc <- execParams conn "select * from session.check_session2($1, $2)"
                         [Just (varchar, B.pack js, Text),
                          Just (varchar, B.pack vurs, Text) ]
                         Text
@@ -195,7 +195,7 @@ getsess iconn js vurs = do
            erm <- fmap (fromMaybe "") (errorMessage nconn)
            print erm
            writeIORef iconn (nconn, nret)
-           execParams nconn "select * from session.check_session($1, $2)"
+           execParams nconn "select * from session.check_session2($1, $2)"
                         [Just (varchar, B.pack js, Text),
                          Just (varchar, B.pack vurs, Text) ]
                         Text
@@ -211,7 +211,7 @@ getsess iconn js vurs = do
                        nt <- ntuples dbres
                        nf <- nfields dbres
                        -- print (rs, erm, nt, nf)
-                       if nt == 0 then return $ SessionContext ["","","","",""]
+                       if nt == 0 then return $ SessionContext ["","","","","",""]
                        else do
                           m <- mapM ( \y -> return . fromMaybe "" =<< getvalue dbres 0 y) [0..nf-1]
                           -- print m

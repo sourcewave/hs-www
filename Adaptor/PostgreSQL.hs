@@ -32,7 +32,7 @@ import Control.Concurrent ( forkIO, newQSem, waitQSem, signalQSem, MVar, Chan,
 import qualified Data.Text as T (pack, unpack, singleton)
 import qualified Data.Text.Encoding as T (encodeUtf8, decodeUtf8)
 
-import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Lazy.Builder as BB
 import Debug.Trace
 
 -- Copied from SCGI (could be collapsed)
