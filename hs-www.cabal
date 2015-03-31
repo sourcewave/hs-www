@@ -18,7 +18,7 @@ Executable scgi
   Build-Depends:     base, bytestring, network, hlibgit2, text, unix
     , regex-posix
     , mime-types
-    , postgresql-libpq
+    , network-uri
   Main-Is:           Main.hs
   Hs-Source-Dirs:    .
   Ghc-options:       -Wall -static -threaded
@@ -29,7 +29,7 @@ Executable scgi
 Executable hello
   Main-is:           Hello.hs
   Hs-Source-Dirs:    examples
-  Ghc-options:       -Wall 
+  Ghc-options:       -Wall
   Default-language:   Haskell2010
   Build-depends:     hs-www, base, bytestring
 
